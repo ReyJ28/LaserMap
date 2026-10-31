@@ -42,7 +42,7 @@ PointFrame SafetyGuard::process(const PointFrame& in, double dt) {
   float extent = std::max(maxx - minx, maxy - miny);
   bool small = extent < p_.dwellExtent;
   bool still = haveLast_ && std::hypot(c.x - lastCentroid_.x, c.y - lastCentroid_.y) < p_.dwellMove;
-  if (small && still) parkedFor_ += dt;
+  if (p_.staticGuard && small && still) parkedFor_ += dt;
   else parkedFor_ = 0;
   lastCentroid_ = c;
   haveLast_ = true;

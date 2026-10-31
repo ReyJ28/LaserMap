@@ -35,20 +35,19 @@ struct Seg {
 
 }  // namespace
 
-std::vector<std::vector<Vec2>> findContours(const Frame& f, float threshold) {
+std::vector<std::vector<Vec2>> findContoursField(const std::vector<float>& lum, int W, int H, float threshold) {
   std::vector<std::vector<Vec2>> loops;
-  if (!f.valid()) return loops;
-  const auto lum = luminance(f);
+  if (W <= 0 || H <= 0 || lum.size() != size_t(W) * H) return loops;
   auto in = [&](int x, int y) -> int {
-    if (x < 0 || y < 0 || x >= f.w || y >= f.h) return 0;  // zero-padded border
-    return lum[size_t(y) * f.w + x] >= threshold ? 1 : 0;
+    if (x < 0 || y < 0 || x >= W || y >= H) return 0;  // zero-padded border
+    return lum[size_t(y) * W + x] >= threshold ? 1 : 0;
   };
 
   std::vector<Seg> segs;
   // Cell (i,j) has corners TL=(i,j) TR=(i+1,j) BR=(i+1,j+1) BL=(i,j+1).
   // Edge midpoints in doubled coords: T=(2i+1,2j) R=(2i+2,2j+1) B=(2i+1,2j+2) L=(2i,2j+1).
-  for (int j = -1; j < f.h; ++j) {
-    for (int i = -1; i < f.w; ++i) {
+  for (int j = -1; j < H; ++j) {
+    for (int i = -1; i < W; ++i) {
       int tl = in(i, j), tr = in(i + 1, j), br = in(i + 1, j + 1), bl = in(i, j + 1);
       int c = tl * 8 + tr * 4 + br * 2 + bl;
       if (c == 0 || c == 15) continue;
@@ -96,6 +95,88 @@ std::vector<std::vector<Vec2>> findContours(const Frame& f, float threshold) {
     if (loop.size() >= 3) loops.push_back(std::move(loop));
   }
   return loops;
+}
+
+std::vector<std::vector<Vec2>> findContours(const Frame& f, float threshold) {
+  if (!f.valid()) return {};
+  return findContoursField(luminance(f), f.w, f.h, threshold);
+}
+
+namespace {
+void boxBlur(std::vector<float>& v, int w, int h) {
+  std::vector<float> o(v.size());
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      float s = 0; int n = 0;
+      for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) {
+          int xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+          s += v[size_t(yy) * w + xx]; ++n;
+        }
+      o[size_t(y) * w + x] = s / n;
+    }
+  v.swap(o);
+}
+
+// rgb 0..1 -> hue 0..1, sat, val
+void rgb2hsv(float r, float g, float b, float& h, float& s, float& v) {
+  float mx = std::max({r, g, b}), mn = std::min({r, g, b}), d = mx - mn;
+  v = mx; s = mx > 0 ? d / mx : 0; h = 0;
+  if (d > 0) {
+    if (mx == r) h = std::fmod((g - b) / d, 6.f);
+    else if (mx == g) h = (b - r) / d + 2.f;
+    else h = (r - g) / d + 4.f;
+    h /= 6.f;
+    if (h < 0) h += 1.f;
+  }
+}
+}  // namespace
+
+std::vector<float> buildField(const Frame& f, const TraceParams& p) {
+  if (!f.valid()) return {};
+  const int w = f.w, h = f.h;
+  std::vector<float> lum = luminance(f);
+  std::vector<float> field(lum.size());
+  if (p.source == TraceParams::Alpha) {
+    for (size_t i = 0; i < field.size(); ++i) field[i] = f.rgba[i * 4 + 3] / 255.f;
+  } else if (p.source == TraceParams::Edges) {
+    auto L = [&](int x, int y) { return lum[size_t(std::clamp(y, 0, h - 1)) * w + std::clamp(x, 0, w - 1)]; };
+    for (int y = 0; y < h; ++y)
+      for (int x = 0; x < w; ++x) {
+        float gx = -L(x - 1, y - 1) - 2 * L(x - 1, y) - L(x - 1, y + 1) + L(x + 1, y - 1) + 2 * L(x + 1, y) + L(x + 1, y + 1);
+        float gy = -L(x - 1, y - 1) - 2 * L(x, y - 1) - L(x + 1, y - 1) + L(x - 1, y + 1) + 2 * L(x, y + 1) + L(x + 1, y + 1);
+        field[size_t(y) * w + x] = std::min(1.f, std::hypot(gx, gy) * 0.5f);
+      }
+  } else {
+    field = lum;
+  }
+  int blurs = int(std::lround(std::clamp(p.smoothing, 0.f, 1.f) * 3.f));
+  for (int i = 0; i < blurs; ++i) boxBlur(field, w, h);
+
+  if (p.colourKey || p.keyWhite) {
+    const float tol = std::clamp(p.keyTolerance, 0.f, 1.f) * 0.5f;
+    for (size_t i = 0; i < field.size(); ++i) {
+      float hh, ss, vv;
+      rgb2hsv(f.rgba[i * 4] / 255.f, f.rgba[i * 4 + 1] / 255.f, f.rgba[i * 4 + 2] / 255.f, hh, ss, vv);
+      bool match = false;
+      if (p.colourKey && ss > 0.2f && vv > 0.1f) {
+        float d = std::fabs(hh - p.keyHue);
+        d = std::min(d, 1.f - d);
+        match = d <= tol;
+      }
+      if (p.keyWhite && vv > 0.85f && ss < 0.2f) match = true;
+      if (!match) field[i] = 0.f;
+    }
+  }
+  return field;
+}
+
+std::vector<uint8_t> maskImage(const Frame& f, const TraceParams& p) {
+  auto field = buildField(f, p);
+  std::vector<uint8_t> m(field.size());
+  for (size_t i = 0; i < field.size(); ++i) m[i] = field[i] >= p.threshold ? 255 : 0;
+  return m;
 }
 
 namespace {
@@ -160,10 +241,15 @@ std::vector<Vec2> simplifyClosed(const std::vector<Vec2>& poly, float eps) {
 std::vector<Shape> extractShapes(const Frame& f, const TraceParams& p) {
   std::vector<Shape> shapes;
   if (!f.valid()) return shapes;
-  auto contours = findContours(f, p.threshold);
+  auto contours = findContoursField(buildField(f, p), f.w, f.h, p.threshold);
   contours.erase(std::remove_if(contours.begin(), contours.end(),
                                 [&](const auto& c) { return perimeter(c) < p.minPerimeter; }),
                  contours.end());
+  if (int(contours.size()) > std::max(p.maxShapes, 0)) {
+    std::sort(contours.begin(), contours.end(),
+              [](const auto& a, const auto& b) { return perimeter(a) > perimeter(b); });
+    contours.resize(size_t(std::max(p.maxShapes, 0)));
+  }
 
   auto build = [&](float eps) {
     std::vector<std::vector<Vec2>> s;
@@ -220,15 +306,34 @@ std::vector<Shape> extractShapes(const Frame& f, const TraceParams& p) {
   return shapes;
 }
 
-PointFrame emitOutline(const std::vector<Shape>& shapes) {
+static std::vector<Point> spaced(const std::vector<Point>& pts, float step) {
+  if (step <= 0) return pts;
+  std::vector<Point> out;
+  for (size_t i = 0; i < pts.size(); ++i) {
+    const Point& a = pts[i];
+    const Point& b = pts[(i + 1) % pts.size()];
+    int k = std::max(1, int(std::ceil(std::hypot(b.x - a.x, b.y - a.y) / step)));
+    for (int j = 0; j < k; ++j) {
+      float t = float(j) / k;
+      Point o = a;
+      o.x = a.x + (b.x - a.x) * t; o.y = a.y + (b.y - a.y) * t;
+      o.r = a.r + (b.r - a.r) * t; o.g = a.g + (b.g - a.g) * t; o.b = a.b + (b.b - a.b) * t;
+      out.push_back(o);
+    }
+  }
+  return out;
+}
+
+PointFrame emitOutline(const std::vector<Shape>& shapes, float spacing) {
   PointFrame out;
   for (const auto& sh : shapes) {
     if (sh.pts.size() < 3) continue;
-    Point first = sh.pts[0];
+    std::vector<Point> pts = spaced(sh.pts, spacing);
+    Point first = pts[0];
     first.blank = true;
     out.push_back(first);
-    for (size_t i = 1; i < sh.pts.size(); ++i) out.push_back(sh.pts[i]);
-    out.push_back(sh.pts[0]);  // close the loop
+    for (size_t i = 1; i < pts.size(); ++i) out.push_back(pts[i]);
+    out.push_back(pts[0]);  // close the loop
   }
   return out;
 }

@@ -6,20 +6,23 @@ A clean-room Resolume **FFGL** plugin project that turns video frames into laser
 (target: Pangolin BEYOND). Written from scratch from public specifications; it contains no code
 from, and was not derived from the binaries of, any other product.
 
-## Status (v0.1 scaffold)
+## Status (v0.2)
 
 | Part | State |
 |---|---|
-| Core: luminance iso-contour tracing (marching squares) + Douglas-Peucker simplification | done, tested |
-| Mode 1: **Trace Clip** → blanked jump + lit loop per shape, normalized `[-1,1]` coords, point budget | done, tested |
-| **SafetyGuard**: output disabled by default, brightness cap, point cap, NaN/range sanitising, static-beam fade | done, tested |
-| Desktop harness (`lasermap_cli`): image → SVG preview of the laser path | done |
-| FFGL effect plugin (`plugin/ffgl`): video passthrough, Trace Clip, SafetyGuard, on-screen path preview | written; **syntax-checked against the real FFGL SDK headers only — never linked, loaded in Resolume, or run** |
-| BEYOND output (`ILaserOutput` backend) | **not started** — plugin currently uses a no-op `NullOutput`; needs the BEYOND SDK/API docs |
-| Modes: Beam Runners, Trace Bars, Sweep (erase/draw, video masked in step), Spotlight (video masked to the circle), Grid (calibration) | written, core unit-tested; plugin side **not run in Resolume** |
-| Laser Cannon, Trace Reveal | not started |
+| Core: iso-contour tracing, simplification, signal extraction (Luma / Alpha / Edges, smoothing, colour key, key white, min size, max shapes) | done, unit-tested |
+| Modes: Trace Clip, Beam Runners, Trace Bars, Sweep (erase/reveal, angle, glow, trail), Spotlight (afterglow, rim), Laser Cannon, Trace Reveal, Grid | done, unit-tested; modes are combinable |
+| Trail: glow + spark particles, spark density/size/gravity/fade/colour; Laser Sparks on Sweep | done, unit-tested |
+| Scanner: point spacing, corner dwell/angle, blank dwell, point budget | done, unit-tested |
+| Colour: intensity, clip colour, fixed colour, fixed white | done |
+| SafetyGuard: output disabled by default, brightness cap, point cap, NaN/range sanitising, static guard (toggle) | done, unit-tested |
+| Beat sync (Off / 1 Beat / 2 Beats / 1 Bar) on Beam Runners, Bars, Sweep, Spotlight, Cannon, Reveal | written; assumes the host's `barPhase` is the beat position within the bar. **Unverified** |
+| Video delay (0-8 frames), Show Mask, video masking for Sweep / Spotlight / Cannon / Reveal | written; **GLSL and FBO code never compiled or run** |
+| FFGL plugin wrapper | compiled and linked on Windows; **only partially tested in Resolume** |
+| BEYOND output (`ILaserOutput` backend), Scan Rate, Zone | **not started** (Scan Rate is a placeholder) |
+| Sweep Style "Trace", Resolume Link | **not started** |
 
-Nothing here has been tested with Resolume, BEYOND, or a real laser.
+Nothing here has been tested with BEYOND or a real laser.
 
 ## Build and test
 
@@ -46,19 +49,10 @@ Resolume's FFGL plugin folder and add it as an effect. The plugin ID `LMAP` is a
 Resolume to register one before you distribute. The FFGL SDK is third-party (BSD-style licence) and is
 deliberately not vendored into this repo.
 
-Parameters: **Laser Output** (off by default), **Preview** (draws the laser path over the video),
-Threshold, Simplify, Max Points, Brightness (default 25%), **Mode**, Speed, Size, Count.
-
-| Mode | Speed | Size | Count |
-|---|---|---|---|
-| Trace Clip | – | – | – |
-| Beam Runners | lap rate | tail length | beams per shape |
-| Trace Bars | scroll rate | band period | – |
-| Sweep Erase / Draw | sweep rate | – | – |
-| Spotlight | wander rate | radius | – |
-| Grid | – | – | – |
-
-Grid always shows its path over the video so you can warp the BEYOND zone until laser and picture line up.
+Parameters are grouped in Resolume: Output, Modes, Edge Detection, Scanner, one group per mode, Trail and Colour.
+Modes are independent on/off toggles and can run together (the point budget is split between them).
+**Armed** is off by default and shows a live `pts/sh` readout. **Preview** draws the laser path over the video;
+Grid always does, for calibration. Per-mode controls map to values as described in the Resolume UI tooltips.
 
 ## Laser safety
 

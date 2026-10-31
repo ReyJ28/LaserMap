@@ -5,6 +5,7 @@
 namespace lasermap {
 
 struct SafetyParams {
+  bool staticGuard = true;        // fade beams parked on one spot
   bool outputEnabled = false;     // fail-safe default: no light until explicitly enabled
   float maxBrightness = 1.0f;     // global cap 0..1
   int maxPoints = 4000;           // per-frame point cap

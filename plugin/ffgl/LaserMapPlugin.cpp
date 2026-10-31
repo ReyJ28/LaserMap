@@ -3,38 +3,45 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <sstream>
 
 using namespace ffglex;
 
-enum ParamIndex : unsigned int
+namespace
 {
-	PT_ENABLE,
-	PT_PREVIEW,
-	PT_THRESHOLD,
-	PT_SIMPLIFY,
-	PT_MAXPOINTS,
-	PT_BRIGHTNESS,
-	PT_MODE,
-	PT_SPEED,
-	PT_SIZE,
-	PT_COUNT_AMOUNT,
-	PT_COUNT
+enum class PType { B, S, H, E, O };
+
+struct ParamDef
+{
+	const char* name;
+	const char* group;
+	PType type;
+	float def;
+	std::vector< std::string > options;
 };
 
-static CFFGLPluginInfo PluginInfo(
-	PluginFactory< LaserMapPlugin >,
-	"LMAP",                                 // Unique 4-char ID. Register it with Resolume before releasing.
-	"LaserMap",                             // Plugin name
-	2,                                      // FFGL API major
-	1,                                      // FFGL API minor
-	0,                                      // Plugin major
-	1,                                      // Plugin minor
-	FF_EFFECT,                              // Type
-	"Traces the clip into laser point data",// Description
-	"LaserMap (c) 2026 ReyJ28"              // About
-);
+std::vector< std::string > splitOptions( const char* s )
+{
+	std::vector< std::string > out;
+	std::stringstream ss( s );
+	std::string item;
+	while( std::getline( ss, item, '|' ) )
+		out.push_back( item );
+	return out;
+}
 
-static const char kCopyVert[] = R"(#version 410 core
+const std::vector< ParamDef >& paramDefs()
+{
+	static const std::vector< ParamDef > defs = {
+#define LM_DEF( id, name, group, type, def, opts ) { name, group, PType::type, (float)( def ), splitOptions( opts ) },
+		LASERMAP_PARAMS( LM_DEF )
+#undef LM_DEF
+	};
+	return defs;
+}
+
+const char kCopyVert[] = R"(#version 410 core
 uniform vec2 MaxUV;
 layout( location = 0 ) in vec4 vPosition;
 layout( location = 1 ) in vec2 vUV;
@@ -48,31 +55,55 @@ void main()
 }
 )";
 
-// Plain copy: input is premultiplied and the output must be premultiplied, so no conversion.
-static const char kCopyFrag[] = R"(#version 410 core
+// Input is premultiplied and the output must be premultiplied, so masking is a plain multiply.
+const char kCopyFrag[] = R"(#version 410 core
 uniform sampler2D InputTexture;
-uniform int MaskMode;      // 0 none, 1 half-plane, 2 circle
-uniform vec4 MaskA;        // half-plane: n.xy, edge, keepGreater | circle: centre.xy, radius
+uniform sampler2D MaskTex;
+uniform int MaskMode;      // 0 none, 1 half-plane, 2 discs, 3 mask texture, 4 show mask
+uniform vec4 MaskA;        // half-plane: n.xy, edge, keepGreater
 uniform vec2 InvAspect;    // maps screen position back to laser space
+uniform float MaskGain;    // minimum visibility everywhere
+uniform int NumDiscs;
+uniform vec4 Discs[16];    // x, y, radius, visibility
 in vec2 uv;
 in vec2 ndc;
 out vec4 fragColor;
 void main()
 {
-	float vis = 1.0;
 	vec2 q = ndc * InvAspect;
+	vec2 muv = vec2( ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5 );
+	float vis = 1.0;
 	if( MaskMode == 1 )
 	{
 		float d = dot( q, MaskA.xy );
 		vis = ( MaskA.w > 0.5 ) ? step( MaskA.z, d ) : step( d, MaskA.z );
 	}
 	else if( MaskMode == 2 )
-		vis = 1.0 - step( MaskA.z, length( q - MaskA.xy ) );
+	{
+		vis = 0.0;
+		for( int i = 0; i < 16; ++i )
+		{
+			if( i >= NumDiscs )
+				break;
+			if( length( q - Discs[ i ].xy ) < Discs[ i ].z )
+				vis = max( vis, Discs[ i ].w );
+		}
+		vis = max( vis, MaskGain );
+	}
+	else if( MaskMode == 3 )
+	{
+		vis = max( texture( MaskTex, muv ).r, MaskGain );
+	}
+	else if( MaskMode == 4 )
+	{
+		fragColor = vec4( vec3( texture( MaskTex, muv ).r ), 1.0 );
+		return;
+	}
 	fragColor = texture( InputTexture, uv ) * vis;
 }
 )";
 
-static const char kLineVert[] = R"(#version 410 core
+const char kLineVert[] = R"(#version 410 core
 uniform vec2 Aspect;
 layout( location = 0 ) in vec2 vPos;
 layout( location = 1 ) in vec3 vColor;
@@ -84,7 +115,7 @@ void main()
 }
 )";
 
-static const char kLineFrag[] = R"(#version 410 core
+const char kLineFrag[] = R"(#version 410 core
 in vec3 color;
 out vec4 fragColor;
 void main()
@@ -93,27 +124,48 @@ void main()
 }
 )";
 
+}// namespace
+
+static CFFGLPluginInfo PluginInfo(
+	PluginFactory< LaserMapPlugin >,
+	"LMAP",                                 // Unique 4-char ID. Register it with Resolume before releasing.
+	"LaserMap",                             // Plugin name
+	2,                                      // FFGL API major
+	1,                                      // FFGL API minor
+	0,                                      // Plugin major
+	2,                                      // Plugin minor
+	FF_EFFECT,                              // Type
+	"Traces the clip into laser point data",// Description
+	"LaserMap (c) 2026 ReyJ28"              // About
+);
+
 LaserMapPlugin::LaserMapPlugin() :
 	output( new lasermap::NullOutput() )
 {
 	SetMinInputs( 1 );
 	SetMaxInputs( 1 );
 
-	// Booleans use the bool overload so their default is exact; output starts DISABLED.
-	SetParamInfo( PT_ENABLE, "Laser Output", FF_TYPE_BOOLEAN, false );
-	SetParamInfo( PT_PREVIEW, "Preview", FF_TYPE_BOOLEAN, true );
-	SetParamInfof( PT_THRESHOLD, "Threshold", FF_TYPE_STANDARD );
-	SetParamInfof( PT_SIMPLIFY, "Simplify", FF_TYPE_STANDARD );
-	SetParamInfof( PT_MAXPOINTS, "Max Points", FF_TYPE_STANDARD );
-	SetParamInfof( PT_BRIGHTNESS, "Brightness", FF_TYPE_STANDARD );
+	const auto& defs = paramDefs();
+	for( unsigned i = 0; i < PT_COUNT; ++i )
+		values[ i ] = defs[ i ].def;
 
-	static const char* kModes[] = { "Trace Clip", "Beam Runners", "Trace Bars", "Sweep Erase", "Sweep Draw", "Spotlight", "Grid" };
-	SetOptionParamInfo( PT_MODE, "Mode", 7, 0.f );
-	for( unsigned int i = 0; i < 7; ++i )
-		SetParamElementInfo( PT_MODE, i, kModes[ i ], (float)i );
-	SetParamInfof( PT_SPEED, "Speed", FF_TYPE_STANDARD );
-	SetParamInfof( PT_SIZE, "Size", FF_TYPE_STANDARD );
-	SetParamInfof( PT_COUNT_AMOUNT, "Count", FF_TYPE_STANDARD );
+	for( unsigned i = 0; i < PT_COUNT; ++i )
+	{
+		const ParamDef& d = defs[ i ];
+		switch( d.type )
+		{
+		case PType::B: SetParamInfo( i, d.name, FF_TYPE_BOOLEAN, d.def > 0.5f ); break;
+		case PType::E: SetParamInfo( i, d.name, FF_TYPE_EVENT, false ); break;
+		case PType::S: SetParamInfo( i, d.name, FF_TYPE_STANDARD, d.def ); break;
+		case PType::H: SetParamInfo( i, d.name, FF_TYPE_HUE, d.def ); break;
+		case PType::O:
+			SetOptionParamInfo( i, d.name, (unsigned int)d.options.size(), d.def );
+			for( unsigned k = 0; k < d.options.size(); ++k )
+				SetParamElementInfo( i, k, d.options[ k ].c_str(), (float)k );
+			break;
+		}
+		SetParamGroup( i, d.group );
+	}
 
 	FFGLLog::LogToHost( "Created LaserMap effect" );
 }
@@ -139,6 +191,21 @@ FFResult LaserMapPlugin::InitGL( const FFGLViewportStruct* vp )
 	glBindBuffer( GL_ARRAY_BUFFER, 0 );
 	glBindVertexArray( 0 );
 
+	// Mask texture (single channel); starts as 1x1 black.
+	glGenTextures( 1, &maskTex );
+	{
+		ScopedSamplerActivation activate( 1 );
+		Scoped2DTextureBinding binding( maskTex );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+		glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+		const uint8_t zero = 0;
+		glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
+		glTexImage2D( GL_TEXTURE_2D, 0, GL_R8, 1, 1, 0, GL_RED, GL_UNSIGNED_BYTE, &zero );
+		glPixelStorei( GL_UNPACK_ALIGNMENT, 4 );
+	}
+
 	haveLastFrame = false;
 	return CFFGLPlugin::InitGL( vp );
 }
@@ -149,45 +216,112 @@ FFResult LaserMapPlugin::DeInitGL()
 	lineShader.FreeGLResources();
 	quad.Release();
 	analysisFbo.Release();
+	for( auto& r : ring )
+		r.Release();
+	ringW = ringH = 0;
 	if( lineVbo )
 		glDeleteBuffers( 1, &lineVbo );
 	if( lineVao )
 		glDeleteVertexArrays( 1, &lineVao );
-	lineVbo = lineVao = 0;
+	if( maskTex )
+		glDeleteTextures( 1, &maskTex );
+	lineVbo = lineVao = maskTex = 0;
 	analysisW = analysisH = 0;
 	return FF_SUCCESS;
 }
 
-void LaserMapPlugin::drawTexture( const FFGLTextureStruct& tex, const FFGLTexCoords& maxUV, const lasermap::VideoMask* mask )
+// Beat phase 0..1 for a Sync option (Off, 1 Beat, 2 Beats, 1 Bar), or -1 to free-run.
+float LaserMapPlugin::syncPhase( unsigned i ) const
+{
+	const int o = opt( i );
+	if( o <= 0 || bpm <= 0.f )
+		return -1.f;
+	static const float beats[] = { 1.f, 2.f, 4.f };
+	const float b = beats[ std::clamp( o - 1, 0, 2 ) ];
+	float ph = std::fmod( barPhase, b ) / b;// barPhase is taken as the position in beats within the bar
+	if( ph < 0.f )
+		ph += 1.f;
+	return ph;
+}
+
+void LaserMapPlugin::uploadMask( const std::vector< uint8_t >& data, int w, int h )
+{
+	if( !maskTex || w <= 0 || h <= 0 || data.size() != size_t( w ) * h )
+		return;
+	ScopedSamplerActivation activate( 1 );
+	Scoped2DTextureBinding binding( maskTex );
+	glPixelStorei( GL_UNPACK_ALIGNMENT, 1 );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, data.data() );
+	glPixelStorei( GL_UNPACK_ALIGNMENT, 4 );
+}
+
+void LaserMapPlugin::drawTexture( const FFGLTextureStruct& tex, const FFGLTexCoords& maxUV, const VideoState* vs )
 {
 	ScopedShaderBinding shaderBinding( copyShader.GetGLID() );
+	ScopedSamplerActivation activateMask( 1 );
+	Scoped2DTextureBinding maskBinding( maskTex );
 	ScopedSamplerActivation activateSampler( 0 );
 	Scoped2DTextureBinding textureBinding( tex.Handle );
 	copyShader.Set( "InputTexture", 0 );
+	copyShader.Set( "MaskTex", 1 );
 	copyShader.Set( "MaxUV", maxUV.s, maxUV.t );
-	int maskMode = 0;
-	float a[ 4 ] = { 0, 0, 0, 0 };
-	if( mask && mask->kind == lasermap::VideoMask::HalfPlane )
-	{
-		maskMode = 1;
-		a[ 0 ] = mask->nx; a[ 1 ] = mask->ny; a[ 2 ] = mask->edge; a[ 3 ] = mask->keepGreater ? 1.f : 0.f;
-	}
-	else if( mask && mask->kind == lasermap::VideoMask::Circle )
-	{
-		maskMode = 2;
-		a[ 0 ] = mask->cx; a[ 1 ] = mask->cy; a[ 2 ] = mask->radius;
-	}
+
 	// Laser space spans the longer image side over [-1,1]; map screen position back to it.
 	const float aw = analysisW > 0 ? (float)analysisW : 1.f, ah = analysisH > 0 ? (float)analysisH : 1.f;
 	const float m = std::max( aw, ah );
-	copyShader.Set( "MaskMode", maskMode );
-	copyShader.Set( "MaskA", a[ 0 ], a[ 1 ], a[ 2 ], a[ 3 ] );
 	copyShader.Set( "InvAspect", aw / m, ah / m );
+
+	VideoState none;
+	const VideoState& s = vs ? *vs : none;
+	copyShader.Set( "MaskMode", s.mode );
+	copyShader.Set( "MaskA", s.a[ 0 ], s.a[ 1 ], s.a[ 2 ], s.a[ 3 ] );
+	copyShader.Set( "MaskGain", s.gain );
+	copyShader.Set( "NumDiscs", s.numDiscs );
+	glUniform4fv( copyShader.FindUniform( "Discs" ), 16, s.discs );
 	quad.Draw();
 }
 
-void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords& maxUV )
+// Optionally delays the picture (not the laser) by a few frames using a ring of FBOs.
+FFGLTextureStruct LaserMapPlugin::videoSource( const FFGLTextureStruct& tex, const FFGLTexCoords& maxUV, FFGLTexCoords& outUV )
 {
+	const int delay = std::clamp( (int)std::lround( f( PT_VIDEO_DELAY ) * 8.f ), 0, kRing - 1 );
+	outUV = maxUV;
+	if( delay == 0 || tex.Width == 0 || tex.Height == 0 )
+		return tex;
+
+	if( ringW != tex.Width || ringH != tex.Height )
+	{
+		for( auto& r : ring )
+		{
+			r.Release();
+			if( !r.Initialise( (GLsizei)tex.Width, (GLsizei)tex.Height ) )
+				return tex;
+		}
+		ringW = tex.Width;
+		ringH = tex.Height;
+		ringIdx = 0;
+	}
+	GLint vp[ 4 ];
+	glGetIntegerv( GL_VIEWPORT, vp );
+	{
+		ScopedFBOBinding fbo( ring[ ringIdx ].GetGLID(), ScopedFBOBinding::RB_REVERT );
+		glViewport( 0, 0, (GLsizei)ringW, (GLsizei)ringH );
+		glClearColor( 0.f, 0.f, 0.f, 0.f );
+		glClear( GL_COLOR_BUFFER_BIT );
+		drawTexture( tex, maxUV, nullptr );
+	}
+	glViewport( vp[ 0 ], vp[ 1 ], vp[ 2 ], vp[ 3 ] );
+	const int show = ( ringIdx - delay + kRing ) % kRing;
+	ringIdx = ( ringIdx + 1 ) % kRing;
+	FFGLTextureStruct out = ring[ show ].GetTextureInfo();
+	outUV = GetMaxGLTexCoords( out );
+	return out;
+}
+
+void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords& maxUV, double dt )
+{
+	videoState = VideoState();
+	previewPoints.clear();
 	if( tex.Width == 0 || tex.Height == 0 )
 		return;
 
@@ -225,58 +359,290 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 			glPixelStorei( GL_PACK_ALIGNMENT, 4 );
 		}
 		glViewport( vp[ 0 ], vp[ 1 ], vp[ 2 ], vp[ 3 ] );
-		// GL rows run bottom-up; Frame rows run top-down. Alpha is forced opaque (RGB is premultiplied already).
+		// GL rows run bottom-up; Frame rows run top-down. Alpha is forced opaque (RGB is premultiplied already)
+		// except when extracting from Alpha, where the original alpha matters.
 		for( int y = 0; y < ah; ++y )
 		{
 			const uint8_t* src = &pix[ size_t( ah - 1 - y ) * aw * 4 ];
 			uint8_t* dst = &frame.rgba[ size_t( y ) * aw * 4 ];
 			std::copy( src, src + size_t( aw ) * 4, dst );
-			for( int x = 0; x < aw; ++x )
-				dst[ x * 4 + 3 ] = 255;
+			if( opt( PT_ED_SOURCE ) != 1 )
+				for( int x = 0; x < aw; ++x )
+					dst[ x * 4 + 3 ] = 255;
 		}
 	}
 
+	// ---- Edge Detection / Scanner ----
 	lasermap::TraceParams tp;
-	tp.threshold = threshold;
-	tp.simplifyEps = 0.3f + simplify * 3.0f;
-	tp.minPerimeter = 6.f;
-	tp.maxPoints = 200 + (int)std::lround( maxPoints * 3800.f );
+	tp.source = (lasermap::TraceParams::Source)std::clamp( opt( PT_ED_SOURCE ), 0, 2 );
+	tp.threshold = f( PT_ED_THRESH );
+	tp.colourKey = on( PT_ED_CKEY );
+	tp.keyHue = f( PT_ED_KEYHUE );
+	tp.keyWhite = on( PT_ED_KEYWHITE );
+	tp.keyTolerance = f( PT_ED_KEYTOL );
+	tp.minPerimeter = 4.f + f( PT_ED_MINSIZE ) * 40.f;
+	tp.maxShapes = 1 + (int)std::lround( f( PT_ED_MAXSHAPES ) * 29.f );
+	tp.smoothing = f( PT_ED_SMOOTH );
+	tp.simplifyEps = 0.3f + f( PT_ED_SIMPLIFY ) * 3.0f;
+	const int maxPts = 200 + (int)std::lround( f( PT_SC_MAXPTS ) * 3800.f );
+	tp.maxPoints = maxPts;
 
-	const auto now = std::chrono::steady_clock::now();
-	double dt = haveLastFrame ? std::chrono::duration< double >( now - lastFrame ).count() : 0.0;
-	lastFrame = now;
-	haveLastFrame = true;
+	// ---- Which modes are on ----
+	const bool mClip = on( PT_M_CLIP ), mBeams = on( PT_M_BEAMS ), mSweep = on( PT_M_SWEEP ), mBars = on( PT_M_BARS ),
+	           mSpot = on( PT_M_SPOT ), mCannon = on( PT_M_CANNON ), mReveal = on( PT_M_REVEAL ), mGrid = on( PT_M_GRID );
+	const bool needShapes = mClip || mBeams || mSweep || mBars || mCannon || mReveal;
+	int active = ( mClip ? 1 : 0 ) + ( mBeams ? 1 : 0 ) + ( mSweep ? 1 : 0 ) + ( mBars ? 1 : 0 ) + ( mSpot ? 1 : 0 ) +
+	             ( mCannon ? 1 : 0 ) + ( mReveal ? 1 : 0 ) + ( mGrid ? 1 : 0 );
+	if( !mCannon && cannonWasActive )
+		cannon.reset();
+	cannonWasActive = mCannon;
+
+	// Show Mask: output the thresholded signal instead of the picture (a set-up aid).
+	if( on( PT_ED_SHOWMASK ) )
+	{
+		uploadMask( lasermap::maskImage( frame, tp ), aw, ah );
+		videoState.mode = 4;
+	}
+
+	std::vector< lasermap::Shape > shapes;
+	if( needShapes )
+		shapes = lasermap::extractShapes( frame, tp );
+	lastShapes = (int)shapes.size();
+
 	timeSec += std::min( dt, 0.1 );
+	const float tNow = (float)std::fmod( timeSec, 3600.0 );
 
 	lasermap::ModeParams mp;
-	mp.time = (float)std::fmod( timeSec, 3600.0 );
-	mp.speed = speed;
-	mp.size = size;
-	mp.count = count;
-	mp.maxPoints = tp.maxPoints;
-	mp.invert = ( mode == 4 );
+	mp.time = tNow;
+	mp.maxPoints = std::max( 50, maxPts / std::max( 1, active ) );
+	mp.spacing = 0.01f + f( PT_SC_SPACING ) * 0.14f;
+	mp.maskW = aw;
+	mp.maskH = ah;
 
-	lasermap::ModeOutput mo;
-	switch( mode )
+	lasermap::PointFrame pts;
+	std::vector< lasermap::Vec2 > emitters, sweepEmitters;
+	lasermap::VideoMask chosen;
+	auto take = [ & ]( lasermap::ModeOutput&& o, std::vector< lasermap::Vec2 >* emit ) {
+		pts.insert( pts.end(), o.points.begin(), o.points.end() );
+		auto& dst = emit ? *emit : emitters;
+		dst.insert( dst.end(), o.emitters.begin(), o.emitters.end() );
+		if( chosen.kind == lasermap::VideoMask::None && o.mask.kind != lasermap::VideoMask::None )
+		{
+			chosen = o.mask;
+			if( o.mask.kind == lasermap::VideoMask::Texture && !on( PT_ED_SHOWMASK ) )
+				uploadMask( o.maskImage, aw, ah );
+		}
+	};
+
+	// Sweep (first, so its mask has priority). Auto Sweep loops; Fire Sweep restarts it, or runs it once.
+	bool sweepRunning = false;
+	if( mSweep )
 	{
-	case 0: mo.points = lasermap::traceClip( frame, tp ); break;
-	case 1: mo = lasermap::renderBeamRunners( lasermap::extractShapes( frame, tp ), mp ); break;
-	case 2: mo = lasermap::renderTraceBars( lasermap::extractShapes( frame, tp ), mp ); break;
-	case 3:
-	case 4: mo = lasermap::renderSweep( lasermap::extractShapes( frame, tp ), mp ); break;
-	case 5: mo = lasermap::renderSpotlight( mp ); break;
-	case 6: mo = lasermap::renderGrid( mp ); break;
-	default: break;
+		const float sweepTime = 0.5f + f( PT_SW_TIME ) * 10.8f;
+		if( fireRequested )
+		{
+			sweepOrigin = timeSec;
+			sweepFired = true;
+		}
+		float progress = 0.f;
+		const float sync = syncPhase( PT_SW_SYNC );
+		if( on( PT_SW_AUTO ) )
+		{
+			sweepRunning = true;
+			progress = sync >= 0.f ? sync : (float)std::fmod( ( timeSec - sweepOrigin ) / sweepTime, 1.0 );
+		}
+		else if( sweepFired )
+		{
+			const float e = sync >= 0.f ? sync : (float)( ( timeSec - sweepOrigin ) / sweepTime );
+			if( e < 1.f )
+			{
+				sweepRunning = true;
+				progress = e;
+			}
+			else
+				sweepFired = false;
+		}
+		if( sweepRunning )
+		{
+			lasermap::ModeParams sp = mp;
+			sp.sweepProgress = progress;
+			sp.sweepReveal = opt( PT_SW_ACTION ) == 1;
+			sp.sweepAngleDeg = f( PT_SW_ANGLE ) * 360.f;
+			sp.barGlow = f( PT_SW_GLOW );
+			sp.sweepTrail = f( PT_SW_TRAIL );
+			take( lasermap::renderSweep( shapes, sp ), &sweepEmitters );
+		}
 	}
-	previewPoints = std::move( mo.points );
-	videoMask = mo.mask;
+	fireRequested = false;
 
-	lasermap::SafetyParams sp = guard.params();
-	sp.outputEnabled = enable > 0.5f;
-	sp.maxBrightness = brightness;
-	sp.maxPoints = tp.maxPoints;
-	guard.setParams( sp );
-	output->send( guard.process( previewPoints, dt ) );
+	if( mReveal )
+	{
+		lasermap::ModeParams rp = mp;
+		rp.revealDir = opt( PT_RV_DIR );
+		rp.revealSpeed = f( PT_RV_SPEED ) * 3.16f;
+		rp.fadeTail = f( PT_RV_TAIL ) * 0.64f;
+		rp.syncPhase = syncPhase( PT_RV_SYNC );
+		take( lasermap::renderTraceReveal( shapes, rp ), nullptr );
+	}
+	if( mCannon )
+	{
+		lasermap::CannonParams cp;
+		cp.fireRate = 0.1f + f( PT_CN_RATE ) * 9.5f;
+		cp.chaos = f( PT_CN_CHAOS );
+		cp.hitsToClear = 1 + (int)std::lround( f( PT_CN_HITS ) * 60.f );
+		cp.ripple = f( PT_CN_RIPPLE );
+		cp.rippleHue = f( PT_CN_HUE );
+		cp.matchLaser = on( PT_CN_MATCH );
+		cp.syncPhase = syncPhase( PT_CN_SYNC );
+		take( cannon.render( shapes, cp, dt, mp ), nullptr );
+	}
+	if( mSpot )
+	{
+		lasermap::ModeParams sp = mp;
+		sp.spotRadius = 0.1f + f( PT_SP_SIZE ) * 0.7f;
+		sp.spotRange = f( PT_SP_RANGE );
+		sp.spotSpeed = f( PT_SP_SPEED ) * 1.5f;
+		sp.spotRandom = f( PT_SP_RANDOM );
+		sp.spotAfterglow = f( PT_SP_AFTER );
+		sp.spotRim = f( PT_SP_RIM );
+		sp.spotHue = f( PT_SP_HUE ) < 0.01f ? -1.f : f( PT_SP_HUE );
+		sp.syncPhase = syncPhase( PT_SP_SYNC );
+		take( lasermap::renderSpotlight( sp ), nullptr );
+	}
+	if( mBeams )
+	{
+		lasermap::ModeParams bp = mp;
+		bp.beamCount = 1 + (int)std::lround( f( PT_BR_COUNT ) * 31.f );
+		bp.beamDirection = opt( PT_BR_DIR );
+		bp.beamSpeed = 0.1f + f( PT_BR_SPEED ) * 4.f;
+		bp.tailLength = 0.02f + f( PT_BR_TAIL ) * 0.5f;
+		bp.scatter = f( PT_BR_SCATTER );
+		bp.syncPhase = syncPhase( PT_BR_SYNC );
+		take( lasermap::renderBeamRunners( shapes, bp ), nullptr );
+	}
+	if( mBars )
+	{
+		lasermap::ModeParams bp = mp;
+		bp.barsDirection = opt( PT_TB_DIR );
+		bp.barWidth = f( PT_TB_WIDTH ) * 0.6f;
+		bp.barGap = f( PT_TB_GAP ) * 0.8f;
+		bp.barSpeed = f( PT_TB_SPEED ) * 2.f;
+		bp.syncPhase = syncPhase( PT_TB_SYNC );
+		take( lasermap::renderTraceBars( shapes, bp ), nullptr );
+	}
+	if( mClip )
+	{
+		lasermap::ModeOutput o;
+		o.points = lasermap::emitOutline( shapes, mp.spacing );
+		take( std::move( o ), nullptr );
+	}
+	if( mGrid )
+		take( lasermap::renderGrid( mp ), nullptr );
+
+	// ---- Colour ----
+	{
+		const float intensity = clamp01( f( PT_CL_INTENSITY ) );
+		float fr = 1, fg = 1, fb = 1;
+		const bool clip = on( PT_CL_CLIP );
+		if( !clip && !on( PT_CL_WHITE ) )
+			lasermap::hueToRgb( f( PT_CL_FIXED ), fr, fg, fb );
+		for( auto& p : pts )
+		{
+			if( !clip )
+			{
+				const float l = std::max( { p.r, p.g, p.b } );// keep the point's brightness (fades, tails)
+				p.r = fr * l; p.g = fg * l; p.b = fb * l;
+			}
+			p.r *= intensity; p.g *= intensity; p.b *= intensity;
+		}
+	}
+
+	// ---- Trail (glow + sparks) and Laser Sparks ----
+	lasermap::TrailParams trp;
+	trp.style = opt( PT_TR_STYLE );
+	trp.amount = f( PT_TR_AMOUNT );
+	trp.density = f( PT_TR_DENSITY );
+	trp.size = f( PT_TR_SIZE );
+	trp.gravity = f( PT_TR_GRAV );
+	trp.fadeSeconds = 0.1f + f( PT_TR_FADE ) * 3.f;
+	trp.hue = f( PT_TR_HUE );
+	if( trp.style == 0 )
+		trail.clear();
+	else
+	{
+		trail.update( dt, emitters, trp );
+		auto fx = trail.render( emitters, trp );
+		pts.insert( pts.end(), fx.begin(), fx.end() );
+	}
+	lasermap::TrailParams sparks = trp;
+	sparks.style = 2;
+	sparks.density = f( PT_SW_SPARKS );
+	if( sparks.density <= 0.f )
+		sweepSparks.clear();
+	else
+	{
+		sweepSparks.update( dt, sweepEmitters, sparks );
+		auto fx = sweepSparks.render( sweepEmitters, sparks );
+		pts.insert( pts.end(), fx.begin(), fx.end() );
+	}
+	previewPoints = pts;
+
+	// ---- Scanner post-processing, SafetyGuard, output ----
+	lasermap::ScanParams sc;
+	sc.cornerDwell = (int)std::lround( f( PT_SC_CDWELL ) * 12.f );
+	sc.cornerAngle = 0.2f + f( PT_SC_CANGLE ) * 1.6f;
+	sc.blankDwell = (int)std::lround( f( PT_SC_BDWELL ) * 16.f );
+	lasermap::PointFrame scanned = lasermap::scanOptimise( pts, sc );
+
+	lasermap::SafetyParams sfp = guard.params();
+	sfp.outputEnabled = on( PT_ARMED );
+	sfp.staticGuard = on( PT_STATIC_GUARD );
+	sfp.maxBrightness = f( PT_BRIGHTNESS );
+	sfp.maxPoints = maxPts;
+	guard.setParams( sfp );
+	lasermap::PointFrame safe = guard.process( scanned, dt );
+	lastPoints = (int)safe.size();
+	output->send( safe );
+
+	// ---- Video mask from the chosen mode ----
+	if( videoState.mode != 4 )
+	{
+		switch( chosen.kind )
+		{
+		case lasermap::VideoMask::HalfPlane:
+			videoState.mode = 1;
+			videoState.a[ 0 ] = chosen.nx; videoState.a[ 1 ] = chosen.ny; videoState.a[ 2 ] = chosen.edge;
+			videoState.a[ 3 ] = chosen.keepGreater ? 1.f : 0.f;
+			break;
+		case lasermap::VideoMask::Discs:
+			videoState.mode = 2;
+			videoState.numDiscs = (int)std::min< size_t >( chosen.discs.size(), 16 );
+			for( int i = 0; i < videoState.numDiscs; ++i )
+			{
+				videoState.discs[ i * 4 + 0 ] = chosen.discs[ i ].x;
+				videoState.discs[ i * 4 + 1 ] = chosen.discs[ i ].y;
+				videoState.discs[ i * 4 + 2 ] = chosen.discs[ i ].r;
+				videoState.discs[ i * 4 + 3 ] = chosen.discs[ i ].a;
+			}
+			videoState.gain = chosen.gain;
+			break;
+		case lasermap::VideoMask::Texture:
+			videoState.mode = 3;
+			videoState.gain = chosen.gain;
+			break;
+		default: break;
+		}
+	}
+
+	// ---- Live readout on the Armed parameter (a few times a second) ----
+	sinceReadout += dt;
+	if( sinceReadout > 0.5 )
+	{
+		sinceReadout = 0.0;
+		char buf[ 48 ];
+		std::snprintf( buf, sizeof buf, "Armed  %d pts/%d sh", lastPoints, lastShapes );
+		SetParamDisplayName( PT_ARMED, buf, true );
+	}
 }
 
 void LaserMapPlugin::drawOverlay()
@@ -319,23 +685,30 @@ FFResult LaserMapPlugin::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	const FFGLTextureStruct& tex = *pGL->inputTextures[ 0 ];
 	const FFGLTexCoords maxUV = GetMaxGLTexCoords( tex );
 
+	const auto now = std::chrono::steady_clock::now();
+	const double dt = haveLastFrame ? std::chrono::duration< double >( now - lastFrame ).count() : 0.0;
+	lastFrame = now;
+	haveLastFrame = true;
+
 	// 1. Trace -> SafetyGuard -> output. Must never take the video down: on any failure the
 	//    laser frame is dropped and the video is drawn unmasked.
 	try
 	{
-		analyse( tex, maxUV );
+		analyse( tex, maxUV, dt );
 	}
 	catch( ... )
 	{
 		previewPoints.clear();
-		videoMask = lasermap::VideoMask();
+		videoState = VideoState();
 	}
 
-	// 2. The video is drawn (masked only by Sweep/Spotlight, so picture and laser share an edge).
-	drawTexture( tex, maxUV, &videoMask );
+	// 2. The video (optionally delayed), masked only by modes that share an edge with the laser.
+	FFGLTexCoords srcUV;
+	const FFGLTextureStruct src = videoSource( tex, maxUV, srcUV );
+	drawTexture( src, srcUV, &videoState );
 
 	// 3. Optional on-screen preview of the laser path (always shown in Grid mode for calibration).
-	if( preview > 0.5f || mode == 6 )
+	if( on( PT_PREVIEW ) || on( PT_M_GRID ) )
 		drawOverlay();
 
 	return FF_SUCCESS;
@@ -343,42 +716,30 @@ FFResult LaserMapPlugin::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 
 FFResult LaserMapPlugin::SetFloatParameter( unsigned int index, float value )
 {
-	if( index == PT_MODE )
+	if( index >= PT_COUNT )
+		return FF_FAIL;
+	const ParamDef& d = paramDefs()[ index ];
+	switch( d.type )
 	{
-		mode = std::clamp( (int)std::lround( value ), 0, 6 );
-		return FF_SUCCESS;
-	}
-	value = std::clamp( value, 0.f, 1.f );
-	switch( index )
-	{
-	case PT_ENABLE: enable = value; break;
-	case PT_PREVIEW: preview = value; break;
-	case PT_THRESHOLD: threshold = value; break;
-	case PT_SIMPLIFY: simplify = value; break;
-	case PT_MAXPOINTS: maxPoints = value; break;
-	case PT_BRIGHTNESS: brightness = value; break;
-	case PT_SPEED: speed = value; break;
-	case PT_SIZE: size = value; break;
-	case PT_COUNT_AMOUNT: count = value; break;
-	default: return FF_FAIL;
+	case PType::O:
+		values[ index ] = (float)std::clamp( (int)std::lround( value ), 0, (int)d.options.size() - 1 );
+		break;
+	case PType::B:
+		values[ index ] = value > 0.5f ? 1.f : 0.f;
+		break;
+	case PType::E:
+		if( value > 0.5f && values[ index ] <= 0.5f && index == PT_FIRE_SWEEP )
+			fireRequested = true;
+		values[ index ] = value > 0.5f ? 1.f : 0.f;
+		break;
+	default:
+		values[ index ] = clamp01( value );
+		break;
 	}
 	return FF_SUCCESS;
 }
 
 float LaserMapPlugin::GetFloatParameter( unsigned int index )
 {
-	switch( index )
-	{
-	case PT_ENABLE: return enable;
-	case PT_PREVIEW: return preview;
-	case PT_THRESHOLD: return threshold;
-	case PT_SIMPLIFY: return simplify;
-	case PT_MAXPOINTS: return maxPoints;
-	case PT_BRIGHTNESS: return brightness;
-	case PT_MODE: return (float)mode;
-	case PT_SPEED: return speed;
-	case PT_SIZE: return size;
-	case PT_COUNT_AMOUNT: return count;
-	}
-	return 0.f;
+	return index < PT_COUNT ? values[ index ] : 0.f;
 }
