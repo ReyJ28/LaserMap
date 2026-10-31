@@ -24,3 +24,8 @@ enable_testing()
 add_executable(lasermap_tests tests/test_core.cpp)
 target_link_libraries(lasermap_tests PRIVATE lasermap_core)
 add_test(NAME core COMMAND lasermap_tests)
+
+option(LASERMAP_BUILD_FFGL "Build the Resolume FFGL plugin (needs FFGL_SDK_DIR)" OFF)
+if(LASERMAP_BUILD_FFGL)
+  add_subdirectory(plugin/ffgl)
+endif()
