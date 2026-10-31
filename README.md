@@ -37,7 +37,10 @@ cmake -S . -B build -DLASERMAP_BUILD_FFGL=ON -DFFGL_SDK_DIR=../ffgl
 cmake --build build --target LaserMap
 ```
 
-Windows/Linux need GLEW (vcpkg works). On macOS the target is a `.bundle`. Copy the result into
+Windows/Linux need GLEW. On Windows use vcpkg with the `x64-windows-static-md` triplet:
+`vcpkg install glew:x64-windows-static-md`, then add
+`-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-windows-static-md`
+to the first cmake command. On macOS the target is a `.bundle`. Copy the result into
 Resolume's FFGL plugin folder and add it as an effect. The plugin ID `LMAP` is a placeholder; ask
 Resolume to register one before you distribute. The FFGL SDK is third-party (BSD-style licence) and is
 deliberately not vendored into this repo.

@@ -12,6 +12,11 @@ add_subdirectory("${FFGL_SDK_DIR}" ffgl-sdk EXCLUDE_FROM_ALL)
 
 add_library(LaserMap MODULE LaserMapPlugin.h LaserMapPlugin.cpp)
 target_link_libraries(LaserMap PRIVATE ffgl::sdk lasermap_core)
+if(NOT APPLE)
+  # The SDK headers include glew.h; link GLEW here too so its compile definitions (e.g. GLEW_STATIC) apply.
+  find_package(GLEW REQUIRED)
+  target_link_libraries(LaserMap PRIVATE GLEW::GLEW)
+endif()
 target_compile_features(LaserMap PRIVATE cxx_std_17)
 set_target_properties(LaserMap PROPERTIES PREFIX "")
 
