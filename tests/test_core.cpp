@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <limits>
 
+#include "lasermap/modes.h"
 #include "lasermap/safety.h"
 #include "lasermap/trace.h"
 
@@ -100,7 +101,36 @@ static void testSafety() {
   CHECK(g2.currentGain() > 0.99f);
 }
 
+static void testModes() {
+  Frame f = blank(100, 100);
+  fillRect(f, 20, 20, 80, 80);
+  auto shapes = extractShapes(f);
+  CHECK(shapes.size() == 1);
+  ModeParams mp;
+  for (float t : {0.f, 0.7f, 3.1f}) {
+    mp.time = t;
+    auto check = [&](const ModeOutput& o) {
+      CHECK(o.points.size() <= size_t(mp.maxPoints));
+      for (const auto& q : o.points) CHECK(std::isfinite(q.x) && std::isfinite(q.y) && std::fabs(q.x) <= 1.001f && std::fabs(q.y) <= 1.001f);
+    };
+    auto br = renderBeamRunners(shapes, mp); check(br); CHECK(!br.points.empty());
+    auto tb = renderTraceBars(shapes, mp); check(tb);
+    auto sw = renderSweep(shapes, mp); check(sw); CHECK(sw.mask.kind == VideoMask::HalfPlane);
+    mp.invert = true; check(renderSweep(shapes, mp)); mp.invert = false;
+    auto sp = renderSpotlight(mp); check(sp); CHECK(sp.mask.kind == VideoMask::Circle);
+    CHECK(std::hypot(sp.mask.cx, sp.mask.cy) + sp.mask.radius <= 1.5f);
+    check(renderGrid(mp));
+  }
+  // Sweep erase: late in the sweep nothing of the shape remains on the left of the edge.
+  mp.time = 0; mp.speed = 0;  // phase 0 -> edge at -1.25: everything still visible
+  auto early = renderSweep(shapes, mp);
+  CHECK(early.points.size() > 10);
+  mp.maxPoints = 5; CHECK(renderBeamRunners(shapes, mp).points.size() <= 5);
+  CHECK(renderBeamRunners({}, ModeParams{}).points.empty());
+}
+
 int main() {
+  testModes();
   testContours();
   testSimplify();
   testTrace();

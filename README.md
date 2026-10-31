@@ -16,7 +16,8 @@ from, and was not derived from the binaries of, any other product.
 | Desktop harness (`lasermap_cli`): image → SVG preview of the laser path | done |
 | FFGL effect plugin (`plugin/ffgl`): video passthrough, Trace Clip, SafetyGuard, on-screen path preview | written; **syntax-checked against the real FFGL SDK headers only — never linked, loaded in Resolume, or run** |
 | BEYOND output (`ILaserOutput` backend) | **not started** — plugin currently uses a no-op `NullOutput`; needs the BEYOND SDK/API docs |
-| Other modes (sweep, spotlight, beam runners, …) | not started |
+| Modes: Beam Runners, Trace Bars, Sweep (erase/draw, video masked in step), Spotlight (video masked to the circle), Grid (calibration) | written, core unit-tested; plugin side **not run in Resolume** |
+| Laser Cannon, Trace Reveal | not started |
 
 Nothing here has been tested with Resolume, BEYOND, or a real laser.
 
@@ -46,7 +47,18 @@ Resolume to register one before you distribute. The FFGL SDK is third-party (BSD
 deliberately not vendored into this repo.
 
 Parameters: **Laser Output** (off by default), **Preview** (draws the laser path over the video),
-Threshold, Simplify, Max Points, Brightness (default 25%).
+Threshold, Simplify, Max Points, Brightness (default 25%), **Mode**, Speed, Size, Count.
+
+| Mode | Speed | Size | Count |
+|---|---|---|---|
+| Trace Clip | – | – | – |
+| Beam Runners | lap rate | tail length | beams per shape |
+| Trace Bars | scroll rate | band period | – |
+| Sweep Erase / Draw | sweep rate | – | – |
+| Spotlight | wander rate | radius | – |
+| Grid | – | – | – |
+
+Grid always shows its path over the video so you can warp the BEYOND zone until laser and picture line up.
 
 ## Laser safety
 

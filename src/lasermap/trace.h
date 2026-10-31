@@ -21,6 +21,18 @@ std::vector<std::vector<Vec2>> findContours(const Frame& f, float threshold);
 // Douglas-Peucker on a closed polygon.
 std::vector<Vec2> simplifyClosed(const std::vector<Vec2>& poly, float eps);
 
+// A closed outline in laser coordinates ([-1,1], y up) with per-point colour. The last point
+// connects back to the first. All beam modes are built from these.
+struct Shape {
+  std::vector<Point> pts;
+};
+
+// Find, simplify and colour the outlines of the frame (budgeted by p.maxPoints).
+std::vector<Shape> extractShapes(const Frame& f, const TraceParams& p = {});
+
+// Emit shapes as blanked-jump + lit loop.
+PointFrame emitOutline(const std::vector<Shape>& shapes);
+
 // "Trace Clip" mode: outline the bright shapes of the frame as laser points.
 // Output is a blank jump to each contour start followed by the lit loop.
 PointFrame traceClip(const Frame& f, const TraceParams& p = {});

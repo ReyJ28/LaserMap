@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 
+#include "lasermap/modes.h"
 #include "lasermap/output.h"
 #include "lasermap/safety.h"
 #include "lasermap/trace.h"
@@ -27,7 +28,7 @@ public:
 	float GetFloatParameter( unsigned int index ) override;
 
 private:
-	void drawTexture( const FFGLTextureStruct& tex, const FFGLTexCoords& maxUV );
+	void drawTexture( const FFGLTextureStruct& tex, const FFGLTexCoords& maxUV, const lasermap::VideoMask* mask );
 	void analyse( const FFGLTextureStruct& tex, const FFGLTexCoords& maxUV );
 	void drawOverlay();
 
@@ -44,6 +45,12 @@ private:
 	float simplify = 0.3f;
 	float maxPoints = 0.8f;
 	float brightness = 0.25f;
+	int mode = 0;
+	float speed = 0.5f;
+	float size = 0.5f;
+	float count = 0.5f;
+	double timeSec = 0.0;
+	lasermap::VideoMask videoMask;
 
 	lasermap::SafetyGuard guard;
 	std::unique_ptr<lasermap::ILaserOutput> output;

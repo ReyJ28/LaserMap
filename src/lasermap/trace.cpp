@@ -157,9 +157,9 @@ std::vector<Vec2> simplifyClosed(const std::vector<Vec2>& poly, float eps) {
   return out;
 }
 
-PointFrame traceClip(const Frame& f, const TraceParams& p) {
-  PointFrame out;
-  if (!f.valid()) return out;
+std::vector<Shape> extractShapes(const Frame& f, const TraceParams& p) {
+  std::vector<Shape> shapes;
+  if (!f.valid()) return shapes;
   auto contours = findContours(f, p.threshold);
   contours.erase(std::remove_if(contours.begin(), contours.end(),
                                 [&](const auto& c) { return perimeter(c) < p.minPerimeter; }),
@@ -192,13 +192,13 @@ PointFrame traceClip(const Frame& f, const TraceParams& p) {
 
   const float scale = 2.f / float(std::max(f.w, f.h));
   const float cx = f.w * 0.5f, cy = f.h * 0.5f;
-  auto emit = [&](Vec2 v, bool blank) {
+  auto convert = [&](Vec2 v) {
     Point pt;
     pt.x = (v.x + 0.5f - cx) * scale;
     pt.y = -(v.y + 0.5f - cy) * scale;
     int sx = std::clamp(int(std::lround(v.x)), 0, f.w - 1);
     int sy = std::clamp(int(std::lround(v.y)), 0, f.h - 1);
-    // Sample inside the shape (contour lies between pixels); take brightest neighbour.
+    // The contour lies between pixels; take the brightest neighbour as the colour.
     float br = -1;
     for (int dy = -1; dy <= 1; ++dy)
       for (int dx = -1; dx <= 1; ++dx) {
@@ -207,16 +207,32 @@ PointFrame traceClip(const Frame& f, const TraceParams& p) {
         float l = float(q[0]) + q[1] + q[2];
         if (l > br) { br = l; pt.r = q[0] / 255.f; pt.g = q[1] / 255.f; pt.b = q[2] / 255.f; }
       }
-    pt.blank = blank;
-    out.push_back(pt);
+    pt.blank = false;
+    return pt;
   };
   for (const auto& c : simp) {
     if (c.size() < 3) continue;
-    emit(c[0], true);
-    for (size_t i = 1; i < c.size(); ++i) emit(c[i], false);
-    emit(c[0], false);  // close the loop
+    Shape sh;
+    sh.pts.reserve(c.size());
+    for (const auto& v : c) sh.pts.push_back(convert(v));
+    shapes.push_back(std::move(sh));
+  }
+  return shapes;
+}
+
+PointFrame emitOutline(const std::vector<Shape>& shapes) {
+  PointFrame out;
+  for (const auto& sh : shapes) {
+    if (sh.pts.size() < 3) continue;
+    Point first = sh.pts[0];
+    first.blank = true;
+    out.push_back(first);
+    for (size_t i = 1; i < sh.pts.size(); ++i) out.push_back(sh.pts[i]);
+    out.push_back(sh.pts[0]);  // close the loop
   }
   return out;
 }
+
+PointFrame traceClip(const Frame& f, const TraceParams& p) { return emitOutline(extractShapes(f, p)); }
 
 }  // namespace lasermap
