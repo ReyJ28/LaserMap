@@ -7,8 +7,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <ctime>
 #include <filesystem>
+#include <set>
 #include <sstream>
 
 using namespace ffglex;
@@ -129,6 +131,26 @@ void main()
 }
 )";
 
+// Writes a message to Resolume's log, once per distinct text (so a per-frame problem can't flood it).
+void logOnce( const std::string& msg )
+{
+	static std::set< std::string > seen;
+	if( seen.size() > 50 || !seen.insert( msg ).second )
+		return;
+	FFGLLog::LogToHost( ( "LaserMap: " + msg ).c_str() );
+}
+
+// Logs any pending OpenGL error with a label saying where it happened.
+void checkGL( const char* where )
+{
+	for( int i = 0; i < 4; ++i )
+	{
+		const GLenum e = glGetError();
+		if( e == GL_NO_ERROR )
+			return;
+		logOnce( std::string( "OpenGL error 0x" ) + ( [ e ] { char b[ 16 ]; std::snprintf( b, sizeof b, "%04X", (unsigned)e ); return std::string( b ); } )() + " after " + where );
+	}
+}
 }// namespace
 
 static CFFGLPluginInfo PluginInfo(
@@ -179,11 +201,25 @@ LaserMapPlugin::~LaserMapPlugin() = default;
 
 FFResult LaserMapPlugin::InitGL( const FFGLViewportStruct* vp )
 {
-	if( !copyShader.Compile( kCopyVert, kCopyFrag ) || !lineShader.Compile( kLineVert, kLineFrag ) || !quad.Initialise() )
+	if( !copyShader.Compile( kCopyVert, kCopyFrag ) )
 	{
+		logOnce( "InitGL failed: the video copy shader did not compile" );
 		DeInitGL();
 		return FF_FAIL;
 	}
+	if( !lineShader.Compile( kLineVert, kLineFrag ) )
+	{
+		logOnce( "InitGL failed: the preview line shader did not compile" );
+		DeInitGL();
+		return FF_FAIL;
+	}
+	if( !quad.Initialise() )
+	{
+		logOnce( "InitGL failed: screen quad" );
+		DeInitGL();
+		return FF_FAIL;
+	}
+	logOnce( "InitGL ok (shaders compiled)" );
 	glGenVertexArrays( 1, &lineVao );
 	glGenBuffers( 1, &lineVbo );
 	glBindVertexArray( lineVao );
@@ -370,6 +406,7 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 		analysisFbo.Release();
 		if( !analysisFbo.Initialise( aw, ah ) )
 		{
+			logOnce( "analysis framebuffer could not be created: tracing and preview are disabled" );
 			analysisW = analysisH = 0;
 			return;
 		}
@@ -754,11 +791,19 @@ FFResult LaserMapPlugin::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	{
 		analyse( tex, maxUV, dt );
 	}
-	catch( ... )
+	catch( const std::exception& e )
 	{
+		logOnce( std::string( "analysis threw: " ) + e.what() );
 		previewPoints.clear();
 		videoState = VideoState();
 	}
+	catch( ... )
+	{
+		logOnce( "analysis threw an unknown exception" );
+		previewPoints.clear();
+		videoState = VideoState();
+	}
+	checkGL( "analysis" );
 
 	// 2. The video (optionally delayed), masked only by modes that share an edge with the laser.
 	FFGLTexCoords srcUV;
@@ -766,8 +811,20 @@ FFResult LaserMapPlugin::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	drawTexture( src, srcUV, &videoState );
 
 	// 3. Optional on-screen preview of the laser path (always shown in Grid mode for calibration).
+	checkGL( "video draw" );
 	if( on( PT_PREVIEW ) || on( PT_M_GRID ) )
 		drawOverlay();
+	checkGL( "preview overlay" );
+
+	// One line of status per distinct state, so Resolume's log shows whether tracing finds anything.
+	{
+		char buf[ 128 ];
+		std::snprintf( buf, sizeof buf, "frame ok: %u x %u input, %d shapes, %d preview points, analysis %dx%d",
+		               (unsigned)tex.Width, (unsigned)tex.Height, lastShapes, (int)previewPoints.size(), analysisW, analysisH );
+		static int n = 0;
+		if( ++n == 30 || n == 300 )
+			logOnce( std::string( buf ) + ( n == 30 ? " (frame 30)" : " (frame 300)" ) );
+	}
 
 	return FF_SUCCESS;
 }
