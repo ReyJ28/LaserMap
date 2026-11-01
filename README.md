@@ -19,10 +19,17 @@ from, and was not derived from the binaries of, any other product.
 | Beat sync (Off / 1 Beat / 2 Beats / 1 Bar) on Beam Runners, Bars, Sweep, Spotlight, Cannon, Reveal | written; assumes the host's `barPhase` is the beat position within the bar. **Unverified** |
 | Video delay (0-8 frames), Show Mask, video masking for Sweep / Spotlight / Cannon / Reveal | written; **GLSL and FBO code never compiled or run** |
 | FFGL plugin wrapper | compiled and linked on Windows; **only partially tested in Resolume** |
-| BEYOND output (`ILaserOutput` backend), Scan Rate, Zone | **not started** (Scan Rate is a placeholder) |
+| ILDA recording: **Record** toggle writes the generated frames to `Documents/LaserMap/recording-<time>.ild` (ILDA format 5, 2D true colour); `lasermap_cli ... out.ild` exports a single frame | done, encoder unit-tested; **plugin side not run in Resolume**; import into BEYOND untested |
+| BEYOND live output (`ILaserOutput` backend), Scan Rate, Zone | **not started**: BEYOND's documented interfaces (TCP PangoScript, OSC, MIDI, HTTP server) are control-only; live frames need Pangolin's SDK (on request via sdk@pangolin.com). Scan Rate is a placeholder |
 | Sweep Style "Trace", Resolume Link | **not started** |
 
 Nothing here has been tested with BEYOND or a real laser.
+
+## Prebuilt Windows plugin
+
+Every push builds `LaserMap.dll` in GitHub Actions (`.github/workflows/build.yml`): open the latest run in the
+repository's **Actions** tab and download the **LaserMap-windows-x64** artifact. Unzip it and copy the DLL into
+Resolume's Extra Effects folder.
 
 ## Build and test
 

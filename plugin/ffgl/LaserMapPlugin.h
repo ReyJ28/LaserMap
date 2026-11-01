@@ -24,6 +24,7 @@
 	X( BRIGHTNESS, "Brightness", "Output", S, 0.25, "" )                                       \
 	X( SCAN_RATE, "Scan Rate", "Output", S, 0.45, "" )                                         \
 	X( VIDEO_DELAY, "Video Delay", "Output", S, 0, "" )                                        \
+	X( RECORD, "Record", "Output", B, 0, "" )                                                  \
 	X( M_CLIP, "Trace Clip", "Modes", B, 1, "" )                                               \
 	X( M_BEAMS, "Beam Runners", "Modes", B, 0, "" )                                            \
 	X( M_SWEEP, "Sweep", "Modes", B, 0, "" )                                                   \
@@ -142,6 +143,7 @@ private:
 	void analyse( const FFGLTextureStruct& tex, const FFGLTexCoords& maxUV, double dt );
 	void drawOverlay();
 	void uploadMask( const std::vector< uint8_t >& data, int w, int h );
+	void flushRecording();
 	FFGLTextureStruct videoSource( const FFGLTextureStruct& tex, const FFGLTexCoords& maxUV, FFGLTexCoords& outUV );
 
 	ffglex::FFGLShader copyShader;
@@ -172,6 +174,10 @@ private:
 	double sweepOrigin = 0.0;
 	bool sweepFired = false;
 	bool fireRequested = false;
+
+	std::vector< lasermap::PointFrame > recorded;
+	bool wasRecording = false;
+	std::string lastRecordPath;
 
 	int lastShapes = 0, lastPoints = 0;
 	double sinceReadout = 0.0;

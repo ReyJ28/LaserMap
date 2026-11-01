@@ -10,6 +10,7 @@ endif()
 add_library(lasermap_core
   src/lasermap/trace.cpp
   src/lasermap/modes.cpp
+  src/lasermap/ilda.cpp
   src/lasermap/safety.cpp)
 target_include_directories(lasermap_core PUBLIC src)
 if(MSVC)

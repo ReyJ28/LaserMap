@@ -1,9 +1,14 @@
 // LaserMap — Copyright (c) 2026 ReyJ28. All rights reserved. See LICENSE.
 #include "LaserMapPlugin.h"
 
+#include "lasermap/ilda.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <filesystem>
 #include <sstream>
 
 using namespace ffglex;
@@ -210,8 +215,40 @@ FFResult LaserMapPlugin::InitGL( const FFGLViewportStruct* vp )
 	return CFFGLPlugin::InitGL( vp );
 }
 
+// Writes the recorded frames to Documents/LaserMap/recording-<time>.ild (ILDA, 2D true colour).
+void LaserMapPlugin::flushRecording()
+{
+	if( recorded.empty() )
+		return;
+	try
+	{
+		const char* home = std::getenv( "USERPROFILE" );
+		if( !home )
+			home = std::getenv( "HOME" );
+		std::filesystem::path dir = std::filesystem::path( home ? home : "." ) / "Documents" / "LaserMap";
+		std::filesystem::create_directories( dir );
+		char stamp[ 32 ];
+		const std::time_t t = std::time( nullptr );
+		std::strftime( stamp, sizeof stamp, "%Y%m%d-%H%M%S", std::localtime( &t ) );
+		const std::filesystem::path file = dir / ( std::string( "recording-" ) + stamp + ".ild" );
+		if( lasermap::writeIldaFile( file.string(), recorded ) )
+		{
+			lastRecordPath = file.string();
+			FFGLLog::LogToHost( ( "LaserMap: saved " + std::to_string( recorded.size() ) + " frames to " + lastRecordPath ).c_str() );
+		}
+		else
+			FFGLLog::LogToHost( ( "LaserMap: could not write " + file.string() ).c_str() );
+	}
+	catch( ... )
+	{
+		FFGLLog::LogToHost( "LaserMap: recording failed" );
+	}
+	recorded.clear();
+}
+
 FFResult LaserMapPlugin::DeInitGL()
 {
+	flushRecording();
 	copyShader.FreeGLResources();
 	lineShader.FreeGLResources();
 	quad.Release();
@@ -594,6 +631,20 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 	sc.blankDwell = (int)std::lround( f( PT_SC_BDWELL ) * 16.f );
 	lasermap::PointFrame scanned = lasermap::scanOptimise( pts, sc );
 
+	// Record: capture the (pre-safety) frames; written to an .ild file when the toggle goes off. This is a
+	// file, not laser output, so it works with Armed off. Capped at 3600 frames.
+	if( on( PT_RECORD ) )
+	{
+		if( recorded.size() < 3600 && !scanned.empty() )
+			recorded.push_back( scanned );
+		wasRecording = true;
+	}
+	else if( wasRecording )
+	{
+		wasRecording = false;
+		flushRecording();
+	}
+
 	lasermap::SafetyParams sfp = guard.params();
 	sfp.outputEnabled = on( PT_ARMED );
 	sfp.staticGuard = on( PT_STATIC_GUARD );
@@ -642,6 +693,13 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 		char buf[ 48 ];
 		std::snprintf( buf, sizeof buf, "Armed  %d pts/%d sh", lastPoints, lastShapes );
 		SetParamDisplayName( PT_ARMED, buf, true );
+		if( wasRecording )
+		{
+			std::snprintf( buf, sizeof buf, "Recording %d fr", (int)recorded.size() );
+			SetParamDisplayName( PT_RECORD, buf, true );
+		}
+		else
+			SetParamDisplayName( PT_RECORD, "Record", true );
 	}
 }
 

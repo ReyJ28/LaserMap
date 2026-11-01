@@ -1,0 +1,46 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure, build, test
+        run: |
+          cmake -S . -B build
+          cmake --build build
+          ctest --test-dir build --output-on-failure
+
+  windows-plugin:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get the FFGL SDK
+        uses: actions/checkout@v4
+        with:
+          repository: resolume/ffgl
+          path: ffgl
+      - name: Install GLEW
+        run: C:\vcpkg\vcpkg.exe install glew:x64-windows-static-md
+      - name: Configure
+        run: >
+          cmake -S . -B out -A x64
+          -DLASERMAP_BUILD_FFGL=ON
+          -DFFGL_SDK_DIR=${{ github.workspace }}/ffgl
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
+      - name: Build
+        run: cmake --build out --config Release --target LaserMap lasermap_tests
+      - name: Test
+        run: ctest --test-dir out -C Release --output-on-failure
+      - name: Upload plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: LaserMap-windows-x64
+          path: out/plugin/ffgl/Release/LaserMap.dll
+          if-no-files-found: error

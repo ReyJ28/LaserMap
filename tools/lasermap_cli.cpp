@@ -1,6 +1,6 @@
 // LaserMap — Copyright (c) 2026 ReyJ28. All rights reserved. See LICENSE.
 // Desktop harness: image (PPM P6 / PGM P5, or built-in test pattern) -> laser point preview SVG.
-//   lasermap_cli [in.ppm|-] out.svg [threshold]
+//   lasermap_cli [in.ppm|-] out.svg [threshold] [out.ild]
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -9,6 +9,8 @@
 #include <sstream>
 #include <string>
 
+#include "lasermap/ilda.h"
+#include "lasermap/modes.h"
 #include "lasermap/safety.h"
 #include "lasermap/trace.h"
 
@@ -85,6 +87,10 @@ int main(int argc, char** argv) {
   }
   svg << "</svg>";
   std::ofstream(argv[2]) << svg.str();
+  if (argc > 4) {
+    if (writeIldaFile(argv[4], {scanOptimise(pts, ScanParams{})})) std::printf("wrote %s\n", argv[4]);
+    else { std::fprintf(stderr, "cannot write %s\n", argv[4]); return 1; }
+  }
   std::printf("%dx%d -> %zu points (%zu after safety)\n", f.w, f.h, pts.size(), safe.size());
   return 0;
 }

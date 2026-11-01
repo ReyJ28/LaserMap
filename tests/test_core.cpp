@@ -3,6 +3,9 @@
 #include <cstdio>
 #include <limits>
 
+#include <fstream>
+
+#include "lasermap/ilda.h"
 #include "lasermap/modes.h"
 #include "lasermap/safety.h"
 #include "lasermap/trace.h"
@@ -283,7 +286,60 @@ static void testCannonTrailScan() {
   CHECK(atCorner == 4);  // the point itself + 3 dwell
 }
 
+static int be16(const std::vector<uint8_t>& b, size_t o) { return int(int16_t((b[o] << 8) | b[o + 1])); }
+static int beU16(const std::vector<uint8_t>& b, size_t o) { return (b[o] << 8) | b[o + 1]; }
+
+static void testIlda() {
+  PointFrame f1{{-1.f, 1.f, 1.f, 0.5f, 0.f, true}, {0.f, 0.f, 0.f, 1.f, 0.f, false}, {1.f, -1.f, 0.f, 0.f, 1.f, false}};
+  PointFrame f2{{0.5f, 0.5f, 1, 1, 1, false}, {0.25f, -0.25f, 1, 1, 1, false}};
+  auto b = encodeIlda({f1, PointFrame{}, f2}, "Test");  // the empty frame is skipped
+  // 2 frames: (32 + 3*8) + (32 + 2*8), plus a 32-byte terminator
+  CHECK(b.size() == (32 + 24) + (32 + 16) + 32);
+  CHECK(b[0] == 'I' && b[1] == 'L' && b[2] == 'D' && b[3] == 'A');
+  CHECK(b[4] == 0 && b[5] == 0 && b[6] == 0);
+  CHECK(b[7] == 5);                                    // format 5
+  CHECK(b[8] == 'T' && b[9] == 'e' && b[12] == 0);     // name, zero padded to 8
+  CHECK(beU16(b, 24) == 3);                            // records in frame 0
+  CHECK(beU16(b, 26) == 0 && beU16(b, 28) == 2);       // frame number, total frames
+  // record 0: blanked, top-left, orange (R=255 G=127/128 B=0), stored as B,G,R
+  CHECK(be16(b, 32) == -32767 && be16(b, 34) == 32767);
+  CHECK(b[36] == 0x40);
+  CHECK(b[37] == 0 && (b[38] == 127 || b[38] == 128) && b[39] == 255);
+  // record 1 centre, lit, green
+  CHECK(be16(b, 40) == 0 && be16(b, 42) == 0 && b[44] == 0x00 && b[45] == 0 && b[46] == 255 && b[47] == 0);
+  // record 2 is the last point of the frame
+  CHECK(b[52] == 0x80);
+  // second header
+  const size_t h2 = 32 + 24;
+  CHECK(b[h2] == 'I' && beU16(b, h2 + 24) == 2 && beU16(b, h2 + 26) == 1 && beU16(b, h2 + 28) == 2);
+  CHECK(b[h2 + 32 + 8 + 4] == 0x80);                   // last point of frame 1
+  // terminator: header with zero records
+  const size_t t = b.size() - 32;
+  CHECK(b[t] == 'I' && beU16(b, t + 24) == 0);
+  // Out-of-range and NaN coordinates are clamped / zeroed.
+  PointFrame bad{{5.f, -5.f, 2.f, -1.f, 0.f, false}, {std::numeric_limits<float>::quiet_NaN(), 0.f, 0, 0, 0, false}};
+  auto bb = encodeIlda({bad});
+  CHECK(be16(bb, 32) == 32767 && be16(bb, 34) == -32767 && bb[39] == 255 && bb[38] == 0 /*R=2 -> 255 at idx 39*/);
+  CHECK(be16(bb, 40) == 0);
+  // Over-long frames are truncated to 65535 points.
+  PointFrame big(70000);
+  auto bg = encodeIlda({big});
+  CHECK(bg.size() == size_t(32 + 65535 * 8 + 32));
+  CHECK(beU16(bg, 24) == 65535);
+  // Only empty frames: just a terminator.
+  CHECK(encodeIlda({PointFrame{}, PointFrame{}}).size() == 32);
+  // File round trip.
+  const std::string path = "lasermap_test.ild";
+  CHECK(writeIldaFile(path, {f1, f2}));
+  std::ifstream in(path, std::ios::binary | std::ios::ate);
+  CHECK(in && size_t(in.tellg()) == (32 + 24) + (32 + 16) + 32);
+  in.close();
+  std::remove(path.c_str());
+  CHECK(!writeIldaFile("/nonexistent_dir_lasermap/x.ild", {f1}));
+}
+
 int main() {
+  testIlda();
   testExtract();
   testModes();
   testCannonTrailScan();
