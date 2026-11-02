@@ -2,6 +2,7 @@
 #pragma once
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <set>
 #include <string>
@@ -27,16 +28,16 @@ static_assert(sizeof(SdkPoint) == 20, "SdkPoint must match the BEYOND SDK layout
 // The subset of the BEYOND SDK DLL that LaserMap uses. Deliberately absent: ldbEnableLaserOutput,
 // ldbDisableLaserOutput and ldbBlackout. Arming and blackout stay entirely with the operator in BEYOND.
 struct SdkApi {
-  int (*create)() = nullptr;
-  int (*destroy)() = nullptr;
-  int (*beyondExeReady)() = nullptr;
-  int (*createZoneImage)(int zoneIndex0, const char* name) = nullptr;
-  int (*deleteZoneImage)(const char* name) = nullptr;
-  int (*sendFrameToImage)(const char* name, int count, void* points, void* zones, int rate) = nullptr;
+  std::function<int()> create, destroy, beyondExeReady;
+  std::function<int(int zoneIndex0, const char* name)> createZoneImage;
+  std::function<int(const char* name)> deleteZoneImage;
+  std::function<int(const char* name, int count, void* points, void* zones, int rate)> sendFrameToImage;
   bool complete() const { return create && destroy && beyondExeReady && createZoneImage && deleteZoneImage && sendFrameToImage; }
 };
 
-// Loads the BEYOND SDK DLL (Windows x64 only). dllPath empty = try the usual names. Returns false with a reason.
+// Loads the BEYOND SDK DLL (Windows only; Pangolin's BEYONDIO.dll is 32-bit, so the helper must be a 32-bit build).
+// dllPath empty = try the usual names. On 32-bit builds the DLL's calling convention (cdecl or stdcall) is detected
+// at load time. Calls ldbCreate once as part of that. Returns false with a reason.
 bool loadSdkApi(const std::string& dllPath, SdkApi& api, std::string& error);
 
 class BeyondSink {

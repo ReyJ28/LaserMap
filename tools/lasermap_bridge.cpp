@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
     BeyondSink::Options o;
     o.flipX = flipX; o.flipY = flipY;
     sink = std::make_unique<BeyondSink>(api, o);
-    std::printf("BEYOND SDK loaded. Output arming stays in BEYOND; this helper only streams frames to zone images.\n");
+    std::printf("BEYOND SDK loaded (%s). Output arming stays in BEYOND; this helper only streams frames to zone images.\n", err.c_str());
   }
   TcpServer server;
   if (!server.start(port, [&](const WireFrame& f) {

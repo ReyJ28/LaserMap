@@ -99,10 +99,57 @@ int BeyondSink::zonesActive() const {
 }
 
 #ifdef _WIN32
+namespace {
+enum class Conv { Cdecl, Stdcall };
+
+#if defined(_MSC_VER) && defined(_M_IX86)
+// 32-bit: observe how the callee leaves the stack. Calling a stdcall function through a cdecl pointer leaves ESP 4 bytes
+// higher per argument than expected, because both sides pop the argument. The stack is restored right after.
+__declspec(noinline) int espDelta1(FARPROC fn, const char* arg) {
+  unsigned before = 0, after = 0;
+  __asm { mov before, esp }
+  reinterpret_cast<int(__cdecl*)(const char*)>(fn)(arg);
+  __asm { mov after, esp }
+  __asm { mov esp, before }
+  return int(after) - int(before);
+}
+Conv detectConvention(FARPROC oneArgFn) { return espDelta1(oneArgFn, "LaserMap.probe") == 0 ? Conv::Cdecl : Conv::Stdcall; }
+#else
+Conv detectConvention(FARPROC) { return sizeof(void*) == 8 ? Conv::Cdecl : Conv::Stdcall; }  // x64 has one convention
+#endif
+
+template <class Sig> struct Call;
+template <> struct Call<int()> {
+  static std::function<int()> make(FARPROC p, Conv c) {
+    if (c == Conv::Stdcall) return [p] { return reinterpret_cast<int(__stdcall*)()>(p)(); };
+    return [p] { return reinterpret_cast<int(__cdecl*)()>(p)(); };
+  }
+};
+template <> struct Call<int(const char*)> {
+  static std::function<int(const char*)> make(FARPROC p, Conv c) {
+    if (c == Conv::Stdcall) return [p](const char* a) { return reinterpret_cast<int(__stdcall*)(const char*)>(p)(a); };
+    return [p](const char* a) { return reinterpret_cast<int(__cdecl*)(const char*)>(p)(a); };
+  }
+};
+template <> struct Call<int(int, const char*)> {
+  static std::function<int(int, const char*)> make(FARPROC p, Conv c) {
+    if (c == Conv::Stdcall) return [p](int a, const char* b) { return reinterpret_cast<int(__stdcall*)(int, const char*)>(p)(a, b); };
+    return [p](int a, const char* b) { return reinterpret_cast<int(__cdecl*)(int, const char*)>(p)(a, b); };
+  }
+};
+template <> struct Call<int(const char*, int, void*, void*, int)> {
+  static std::function<int(const char*, int, void*, void*, int)> make(FARPROC p, Conv c) {
+    if (c == Conv::Stdcall)
+      return [p](const char* a, int b, void* d, void* e, int f) { return reinterpret_cast<int(__stdcall*)(const char*, int, void*, void*, int)>(p)(a, b, d, e, f); };
+    return [p](const char* a, int b, void* d, void* e, int f) { return reinterpret_cast<int(__cdecl*)(const char*, int, void*, void*, int)>(p)(a, b, d, e, f); };
+  }
+};
+}  // namespace
+
 bool loadSdkApi(const std::string& dllPath, SdkApi& api, std::string& error) {
   std::vector<std::string> names;
   if (!dllPath.empty()) names = {dllPath};
-  else names = {"BEYONDIOx64.dll", "BEYONDIO.dll", "BeyondIO.dll", "BEYOND_SDK.dll", "BeyondSdk.dll"};
+  else names = {"BEYONDIO.dll", "BEYONDIOx64.dll", "BeyondIO.dll"};
   HMODULE h = nullptr;
   DWORD lastErr = 0;
   for (const auto& n : names) {
@@ -111,8 +158,11 @@ bool loadSdkApi(const std::string& dllPath, SdkApi& api, std::string& error) {
     lastErr = GetLastError();
   }
   if (!h) {
-    error = lastErr == 193 ? "the SDK DLL is not a 64-bit DLL (error 193); this build is 64-bit"
-                           : "could not load the BEYOND SDK DLL (give its path with --sdk-dll), Windows error " + std::to_string(lastErr);
+    if (lastErr == 193)
+      error = sizeof(void*) == 8 ? "the SDK DLL is 32-bit (Windows error 193) but this helper is 64-bit: use the 32-bit helper (lasermap_bridge32.exe)"
+                                 : "the SDK DLL is 64-bit but this helper is 32-bit (Windows error 193)";
+    else
+      error = "could not load BEYONDIO.dll (put it next to the helper or give its path with --sdk-dll), Windows error " + std::to_string(lastErr);
     return false;
   }
   auto get = [&](const char* base) -> FARPROC {
@@ -122,17 +172,26 @@ bool loadSdkApi(const std::string& dllPath, SdkApi& api, std::string& error) {
     }
     return nullptr;
   };
-  api.create = reinterpret_cast<int (*)()>(get("Create"));
-  api.destroy = reinterpret_cast<int (*)()>(get("Destroy"));
-  api.beyondExeReady = reinterpret_cast<int (*)()>(get("BeyondExeReady"));
-  api.createZoneImage = reinterpret_cast<int (*)(int, const char*)>(get("CreateZoneImage"));
-  api.deleteZoneImage = reinterpret_cast<int (*)(const char*)>(get("DeleteZoneImage"));
-  api.sendFrameToImage = reinterpret_cast<int (*)(const char*, int, void*, void*, int)>(get("SendFrameToImage"));
-  if (!api.complete()) {
+  FARPROC pCreate = get("Create"), pDestroy = get("Destroy"), pReady = get("BeyondExeReady"), pNew = get("CreateZoneImage"),
+          pDel = get("DeleteZoneImage"), pSend = get("SendFrameToImage");
+  if (!pCreate || !pDestroy || !pReady || !pNew || !pDel || !pSend) {
     error = "the DLL loaded but is missing some of the functions LaserMap needs (Create, Destroy, BeyondExeReady, "
             "CreateZoneImage, DeleteZoneImage, SendFrameToImage)";
     return false;
   }
+  // ldbCreate takes no arguments, so its calling convention does not matter. It must run before anything else.
+  if (Call<int()>::make(pCreate, Conv::Cdecl)() != 1) {
+    error = "ldbCreate failed";
+    return false;
+  }
+  const Conv conv = detectConvention(pDel);
+  api.create = [] { return 1; };  // already created above; the SDK wants exactly one ldbCreate
+  api.destroy = Call<int()>::make(pDestroy, conv);
+  api.beyondExeReady = Call<int()>::make(pReady, conv);
+  api.createZoneImage = Call<int(int, const char*)>::make(pNew, conv);
+  api.deleteZoneImage = Call<int(const char*)>::make(pDel, conv);
+  api.sendFrameToImage = Call<int(const char*, int, void*, void*, int)>::make(pSend, conv);
+  error = std::string("calling convention: ") + (conv == Conv::Stdcall ? "stdcall" : "cdecl");  // informational
   return true;
 }
 #else

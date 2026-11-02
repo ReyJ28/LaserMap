@@ -6,3 +6,5 @@ out/
 .vs/
 .idea/
 .DS_Store
+BEYONDIO.dll
+*.dll

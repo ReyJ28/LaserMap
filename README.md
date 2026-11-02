@@ -38,16 +38,16 @@ drives the laser.
 3. The plugin only sends what has passed **SafetyGuard**; with **Armed** off it sends empty frames (a live
    connection, no light). The helper's status line shows `CONNECTED`, frames per second and zone.
 
-To drive BEYOND, run the helper on the BEYOND PC with the SDK DLL next to it (or `--sdk-dll path`):
+To drive BEYOND, run the 32-bit helper on the BEYOND PC with `BEYONDIO.dll` next to it (not included; it is Pangolin's) (or `--sdk-dll path`):
 `lasermap_bridge --beyond [--flip-x] [--flip-y]`. Zones are BEYOND's own numbers; arming and blackout stay in BEYOND.
 The frames land as an SDK Image per zone (`LaserMap.Z<n>`), which BEYOND processes with the zone's geometric correction.
 Use **Grid** mode to line the laser up, and `--flip-y` / `--flip-x` if the picture comes out mirrored.
 
 ## Prebuilt Windows plugin
 
-Every push builds `LaserMap.dll` in GitHub Actions (`.github/workflows/build.yml`): open the latest run in the
-repository's **Actions** tab and download the **LaserMap-windows-x64** artifact. Unzip it: `LaserMap.dll` goes into
-Resolume's Extra Effects folder, `lasermap_bridge.exe` runs on the laser PC.
+Every push builds in GitHub Actions (`.github/workflows/build.yml`); open the latest run in the repository's **Actions**
+tab. Artifact **LaserMap-windows-x64** holds `LaserMap.dll` (Resolume's Extra Effects folder). Artifact
+**LaserMap-bridge-win32** holds `lasermap_bridge.exe`, a **32-bit** helper, because Pangolin's `BEYONDIO.dll` is 32-bit.
 
 ## Build and test
 

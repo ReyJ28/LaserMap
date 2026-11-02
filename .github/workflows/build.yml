@@ -35,7 +35,7 @@ jobs:
           -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
           -DVCPKG_TARGET_TRIPLET=x64-windows-static-md
       - name: Build
-        run: cmake --build out --config Release --target LaserMap lasermap_tests lasermap_bridge
+        run: cmake --build out --config Release --target LaserMap lasermap_tests
       - name: Test
         run: ctest --test-dir out -C Release --output-on-failure
       - name: Upload plugin
@@ -44,5 +44,22 @@ jobs:
           name: LaserMap-windows-x64
           path: |
             out/plugin/ffgl/Release/LaserMap.dll
-            out/Release/lasermap_bridge.exe
+          if-no-files-found: error
+
+  # Pangolin's BEYONDIO.dll is a 32-bit DLL, so the helper that loads it must be a 32-bit program.
+  windows-bridge32:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (32-bit)
+        run: cmake -S . -B out32 -A Win32
+      - name: Build
+        run: cmake --build out32 --config Release --target lasermap_bridge lasermap_tests
+      - name: Test
+        run: ctest --test-dir out32 -C Release --output-on-failure
+      - name: Upload helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: LaserMap-bridge-win32
+          path: out32/Release/lasermap_bridge.exe
           if-no-files-found: error
