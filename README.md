@@ -43,8 +43,8 @@ The helper currently has no BEYOND sink; that needs Pangolin's SDK.
 ## Prebuilt Windows plugin
 
 Every push builds `LaserMap.dll` in GitHub Actions (`.github/workflows/build.yml`): open the latest run in the
-repository's **Actions** tab and download the **LaserMap-windows-x64** artifact. Unzip it and copy the DLL into
-Resolume's Extra Effects folder.
+repository's **Actions** tab and download the **LaserMap-windows-x64** artifact. Unzip it: `LaserMap.dll` goes into
+Resolume's Extra Effects folder, `lasermap_bridge.exe` runs on the laser PC.
 
 ## Build and test
 
