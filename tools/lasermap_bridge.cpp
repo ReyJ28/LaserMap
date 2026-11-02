@@ -11,6 +11,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <condition_variable>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -49,6 +51,13 @@ int main(int argc, char** argv) {
   std::atomic<uint64_t> frames{0}, points{0}, lit{0};
   std::atomic<int> zone{0};
   std::unique_ptr<BeyondSink> sink;
+  // BEYOND can be slow to accept a frame (the SDK call is a cross-process window message). The network thread must not
+  // wait for it, so frames go through a mailbox that keeps only the newest frame per zone; one worker feeds BEYOND.
+  std::mutex mbMutex;
+  std::condition_variable mbCv;
+  std::map<int, WireFrame> mailbox;
+  bool workerStop = false;
+  std::thread worker;
   if (beyond) {
     SdkApi api;
     std::string err;
@@ -61,7 +70,10 @@ int main(int argc, char** argv) {
   TcpServer server;
   if (!server.start(port, [&](const WireFrame& f) {
         ++frames;
-        if (sink) sink->onFrame(f);
+        if (sink) {
+          { std::lock_guard<std::mutex> lk(mbMutex); mailbox[f.zone] = f; }
+          mbCv.notify_one();
+        }
         points += f.pts.size();
         zone = f.zone;
         if (!f.pts.empty()) {
@@ -75,10 +87,24 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "cannot listen on port %u\n", unsigned(port));
     return 1;
   }
+  if (sink) {
+    worker = std::thread([&] {
+      std::unique_lock<std::mutex> lk(mbMutex);
+      while (!workerStop) {
+        mbCv.wait_for(lk, std::chrono::milliseconds(200), [&] { return workerStop || !mailbox.empty(); });
+        if (mailbox.empty()) continue;
+        std::map<int, WireFrame> batch;
+        batch.swap(mailbox);
+        lk.unlock();
+        for (auto& kv : batch) sink->onFrame(kv.second);
+        lk.lock();
+      }
+    });
+  }
   std::printf("LaserMap bridge listening on port %u. Waiting for the plugin (Output > Send To Bridge)...\n", unsigned(server.port()));
 
   const auto t0 = std::chrono::steady_clock::now();
-  uint64_t lastFrames = 0;
+  uint64_t lastFrames = 0, lastDelivered = 0;
   int tick = 0;
   while (!g_stop) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -89,11 +115,19 @@ int main(int argc, char** argv) {
                 server.clientConnected() ? "CONNECTED" : "waiting  ", (unsigned long long)(fr - lastFrames), int(zone),
                 (unsigned long long)lit, (unsigned long long)server.droppedBytes(),
                 sink ? (sink->ready() ? " | BEYOND ready" : " | waiting for BEYOND") : "");
+    if (sink) {
+      const uint64_t dl = sink->framesSent();
+      std::printf("          to BEYOND: %llu frames/s | last SDK call %.1f ms\n", (unsigned long long)(dl - lastDelivered), sink->lastCallMs());
+      lastDelivered = dl;
+    }
     std::fflush(stdout);
     lastFrames = fr;
     if (seconds > 0 && std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() >= seconds) break;
   }
   server.stop();
+  { std::lock_guard<std::mutex> lk(mbMutex); workerStop = true; }
+  mbCv.notify_all();
+  if (worker.joinable()) worker.join();
   sink.reset();  // blanks and removes its zone images
   if (!ildPath.empty()) {
     std::lock_guard<std::mutex> lk(m);

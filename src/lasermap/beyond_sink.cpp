@@ -80,7 +80,9 @@ void BeyondSink::onFrame(const WireFrame& f) {
   zl[0] = uint8_t(zone);  // zone list: 1-based indexes, 0 terminates
   const int rate = f.kpps > 0 ? -int(f.kpps) * 1000 : 100;  // negative = points per second, positive = percent
   const int count = int(pts.size());
+  const auto t0 = std::chrono::steady_clock::now();
   api_.sendFrameToImage(imageName(zone).c_str(), count, pts.data(), zl, rate);
+  lastCallMs_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
   ++sent_;
   lit_ = !f.pts.empty();
   last_ = std::chrono::steady_clock::now();

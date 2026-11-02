@@ -1,5 +1,6 @@
 // LaserMap — Copyright (c) 2026 ReyJ28. All rights reserved. See LICENSE.
 #pragma once
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -60,6 +61,7 @@ class BeyondSink {
   void onFrame(const WireFrame& f);  // thread-safe
   void idle();                       // call a few times a second: the watchdog
   uint64_t framesSent() const { return sent_; }
+  double lastCallMs() const { return lastCallMs_; }  // duration of the most recent ldbSendFrameToImage call
   int zonesActive() const;
 
   static void convert(const WireFrame& f, const Options& o, std::vector<SdkPoint>& out);
@@ -75,6 +77,7 @@ class BeyondSink {
   std::set<int> zones_;
   std::chrono::steady_clock::time_point last_{};
   uint64_t sent_ = 0;
+  std::atomic<double> lastCallMs_{0.0};
 };
 
 }  // namespace lasermap
