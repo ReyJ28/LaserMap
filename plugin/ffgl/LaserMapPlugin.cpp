@@ -18,7 +18,7 @@ using namespace ffglex;
 
 namespace
 {
-enum class PType { B, S, H, E, O };
+enum class PType { B, S, H, E, O, T };
 
 struct ParamDef
 {
@@ -208,6 +208,7 @@ LaserMapPlugin::LaserMapPlugin() :
 		case PType::E: SetParamInfo( i, d.name, FF_TYPE_EVENT, false ); break;
 		case PType::S: SetParamInfo( i, d.name, FF_TYPE_STANDARD, d.def ); break;
 		case PType::H: SetParamInfo( i, d.name, FF_TYPE_HUE, d.def ); break;
+		case PType::T: SetParamInfo( i, d.name, FF_TYPE_TEXT, d.options.empty() ? "" : d.options[ 0 ].c_str() ); break;
 		case PType::O:
 			SetOptionParamInfo( i, d.name, (unsigned int)d.options.size(), d.def );
 			for( unsigned k = 0; k < d.options.size(); ++k )
@@ -308,6 +309,7 @@ void LaserMapPlugin::flushRecording()
 FFResult LaserMapPlugin::DeInitGL()
 {
 	flushRecording();
+	bridge.reset();
 	copyShader.FreeGLResources();
 	lineShader.FreeGLResources();
 	quad.Release();
@@ -715,6 +717,30 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 	lastPoints = (int)safe.size();
 	output->send( safe );
 
+	// ---- Bridge: stream the (safety-processed) frames to the helper on the laser PC ----
+	if( on( PT_SEND ) )
+	{
+		std::string host = bridgeAddr;
+		unsigned port = 7788;
+		const size_t colon = bridgeAddr.rfind( ':' );
+		if( colon != std::string::npos )
+		{
+			host = bridgeAddr.substr( 0, colon );
+			const long v = std::strtol( bridgeAddr.c_str() + colon + 1, nullptr, 10 );
+			if( v > 0 && v < 65536 )
+				port = (unsigned)v;
+		}
+		if( host.empty() )
+			host = "127.0.0.1";
+		if( !bridge || bridge->host() != host || bridge->port() != port )
+			bridge = std::make_unique< lasermap::TcpClientOutput >( host, (uint16_t)port );
+		bridge->setZone( (uint8_t)( 1 + opt( PT_ZONE ) ) );
+		bridge->setKpps( (uint16_t)( 5 + f( PT_SCAN_RATE ) * 55 ) );
+		bridge->send( safe );  // empty while Armed is off: the bridge sees "no light" and a live connection
+	}
+	else if( bridge )
+		bridge.reset();
+
 	// ---- Video mask from the chosen mode ----
 	if( videoState.mode != 4 )
 	{
@@ -760,6 +786,18 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 		}
 		else
 			SetParamDisplayName( PT_RECORD, "Record", true );
+		if( bridge )
+		{
+			const uint64_t sent = bridge->framesSent();
+			if( bridge->connected() )
+				std::snprintf( buf, sizeof buf, "Bridge: connected, %d fr/s", (int)std::lround( double( sent - lastBridgeSent ) / 0.5 ) );
+			else
+				std::snprintf( buf, sizeof buf, "Bridge: not connected" );
+			lastBridgeSent = sent;
+			SetParamDisplayName( PT_SEND, buf, true );
+		}
+		else
+			SetParamDisplayName( PT_SEND, "Send To Bridge", true );
 	}
 }
 
@@ -875,6 +913,22 @@ FFResult LaserMapPlugin::SetFloatParameter( unsigned int index, float value )
 		break;
 	}
 	return FF_SUCCESS;
+}
+
+FFResult LaserMapPlugin::SetTextParameter( unsigned int index, const char* value )
+{
+	if( index != PT_BRIDGE_ADDR || !value )
+		return FF_FAIL;
+	bridgeAddr = value;
+	return FF_SUCCESS;
+}
+
+char* LaserMapPlugin::GetTextParameter( unsigned int index )
+{
+	if( index != PT_BRIDGE_ADDR )
+		return (char*)FF_FAIL;
+	textBuf = bridgeAddr;
+	return textBuf.data();
 }
 
 float LaserMapPlugin::GetFloatParameter( unsigned int index )

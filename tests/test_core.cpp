@@ -6,7 +6,14 @@
 #include <fstream>
 
 #include "lasermap/ilda.h"
+#include <atomic>
+#include <chrono>
+#include <mutex>
+#include <thread>
+
 #include "lasermap/modes.h"
+#include "lasermap/net.h"
+#include "lasermap/wire.h"
 #include "lasermap/safety.h"
 #include "lasermap/trace.h"
 
@@ -338,7 +345,76 @@ static void testIlda() {
   CHECK(!writeIldaFile("/nonexistent_dir_lasermap/x.ild", {f1}));
 }
 
+static void testWireAndBridge() {
+  WireFrame a;
+  a.seq = 7; a.zone = 3; a.kpps = 12;
+  a.pts = {{-1.f, 1.f, 1.f, 0.5f, 0.f, true}, {0.f, 0.f, 0.f, 1.f, 0.f, false}, {0.25f, -0.5f, 0.f, 0.f, 1.f, false}};
+  auto bytes = encodeWire(a);
+  CHECK(bytes.size() == kWireHeaderSize + 3 * kWirePointSize);
+  CHECK(bytes[0] == 'L' && bytes[3] == 'R' && bytes[4] == 1 && bytes[5] == 3);
+
+  // Decode in awkward chunks, with garbage in front and a second frame behind.
+  WireFrame b; b.seq = 8; b.zone = 3;
+  auto bytes2 = encodeWire(b);  // empty keep-alive frame
+  std::vector<uint8_t> stream = {1, 2, 3, 'L', 'M', 9};
+  stream.insert(stream.end(), bytes.begin(), bytes.end());
+  stream.insert(stream.end(), bytes2.begin(), bytes2.end());
+  WireDecoder dec;
+  std::vector<WireFrame> got;
+  for (size_t i = 0; i < stream.size(); i += 5) {
+    dec.feed(&stream[i], std::min<size_t>(5, stream.size() - i));
+    WireFrame f;
+    while (dec.next(f)) got.push_back(f);
+  }
+  CHECK(got.size() == 2);
+  CHECK(got.size() == 2 && got[0].seq == 7 && got[0].zone == 3 && got[0].kpps == 12 && got[0].pts.size() == 3);
+  CHECK(got.size() == 2 && std::fabs(got[0].pts[0].x + 1.f) < 1e-3f && got[0].pts[0].blank && !got[0].pts[1].blank);
+  CHECK(got.size() == 2 && std::fabs(got[0].pts[2].y + 0.5f) < 1e-3f && got[0].pts[2].b > 0.99f);
+  CHECK(got.size() == 2 && got[1].seq == 8 && got[1].pts.empty());
+  CHECK(dec.droppedBytes() == 6);
+  // Absurd point counts are rejected, not allocated.
+  std::vector<uint8_t> bad = {'L', 'M', 'B', 'R', 1, 1, 30, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff};
+  WireDecoder d2; d2.feed(bad.data(), bad.size());
+  WireFrame none; CHECK(!d2.next(none));
+
+  // Loopback: plugin-side client -> bridge-side server on this machine.
+  TcpServer server;
+  std::mutex m;
+  std::vector<WireFrame> recv;
+  CHECK(server.start(0, [&](const WireFrame& f) { std::lock_guard<std::mutex> lk(m); recv.push_back(f); }));
+  {
+    TcpClientOutput client("127.0.0.1", server.port());
+    client.setZone(5);
+    client.setKpps(20);
+    PointFrame frame = a.pts;
+    for (int i = 0; i < 80; ++i) {
+      client.send(frame);
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      std::lock_guard<std::mutex> lk(m);
+      size_t withPts = 0;
+      for (const auto& f : recv) if (!f.pts.empty()) ++withPts;
+      if (withPts >= 3) break;
+    }
+    CHECK(client.connected());
+    CHECK(client.framesSent() > 0);
+  }
+  server.stop();
+  std::lock_guard<std::mutex> lk(m);
+  size_t withPts = 0;
+  bool allOk = true;
+  for (const auto& f : recv)
+    if (!f.pts.empty()) { ++withPts; allOk = allOk && f.zone == 5 && f.kpps == 20 && f.pts.size() == 3; }
+  CHECK(withPts >= 3);
+  CHECK(allOk);
+  // A client with nothing to talk to never blocks or crashes.
+  TcpClientOutput orphan("127.0.0.1", 1);
+  orphan.send(a.pts);
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  CHECK(!orphan.connected());
+}
+
 int main() {
+  testWireAndBridge();
   testIlda();
   testExtract();
   testModes();

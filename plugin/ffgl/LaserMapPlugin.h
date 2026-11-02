@@ -11,12 +11,13 @@
 #include <vector>
 
 #include "lasermap/modes.h"
+#include "lasermap/net.h"
 #include "lasermap/output.h"
 #include "lasermap/safety.h"
 #include "lasermap/trace.h"
 
 // X(id, display name (max 16 chars), group, type, default, options)
-// types: B bool, S slider 0..1, H hue 0..1, E event/trigger, O option list ("a|b|c", default = index)
+// types: B bool, S slider 0..1, H hue 0..1, E event/trigger, O option list ("a|b|c", default = index), T text (default in opts)
 #define LASERMAP_PARAMS( X )                                                                   \
 	X( ARMED, "Armed", "Output", B, 0, "" )                                                    \
 	X( PREVIEW, "Preview", "Output", B, 1, "" )                                                \
@@ -25,6 +26,9 @@
 	X( SCAN_RATE, "Scan Rate", "Output", S, 0.45, "" )                                         \
 	X( VIDEO_DELAY, "Video Delay", "Output", S, 0, "" )                                        \
 	X( RECORD, "Record", "Output", B, 0, "" )                                                  \
+	X( SEND, "Send To Bridge", "Output", B, 0, "" )                                            \
+	X( ZONE, "Zone", "Output", O, 0, "Zone 1|Zone 2|Zone 3|Zone 4|Zone 5|Zone 6|Zone 7|Zone 8|Zone 9|Zone 10|Zone 11|Zone 12|Zone 13|Zone 14|Zone 15|Zone 16" ) \
+	X( BRIDGE_ADDR, "Bridge Address", "Output", T, 0, "127.0.0.1:7788" )                       \
 	X( M_CLIP, "Trace Clip", "Modes", B, 1, "" )                                               \
 	X( M_BEAMS, "Beam Runners", "Modes", B, 0, "" )                                            \
 	X( M_SWEEP, "Sweep", "Modes", B, 0, "" )                                                   \
@@ -132,6 +136,8 @@ public:
 
 	FFResult SetFloatParameter( unsigned int index, float value ) override;
 	float GetFloatParameter( unsigned int index ) override;
+	FFResult SetTextParameter( unsigned int index, const char* value ) override;
+	char* GetTextParameter( unsigned int index ) override;
 
 private:
 	bool on( unsigned i ) const { return values[ i ] > 0.5f; }
@@ -175,6 +181,10 @@ private:
 	bool sweepFired = false;
 	bool fireRequested = false;
 
+	std::unique_ptr< lasermap::TcpClientOutput > bridge;
+	std::string bridgeAddr = "127.0.0.1:7788";
+	std::string textBuf;
+	uint64_t lastBridgeSent = 0;
 	std::vector< lasermap::PointFrame > recorded;
 	bool wasRecording = false;
 	std::string lastRecordPath;

@@ -20,10 +20,25 @@ from, and was not derived from the binaries of, any other product.
 | Video delay (0-8 frames), Show Mask, video masking for Sweep / Spotlight / Cannon / Reveal | written; **GLSL and FBO code never compiled or run** |
 | FFGL plugin wrapper | compiled and linked on Windows; **only partially tested in Resolume** |
 | ILDA recording: **Record** toggle writes the generated frames to `Documents/LaserMap/recording-<time>.ild` (ILDA format 5, 2D true colour); `lasermap_cli ... out.ild` exports a single frame | done, encoder unit-tested; **plugin side not run in Resolume**; import into BEYOND untested |
-| BEYOND live output (`ILaserOutput` backend), Scan Rate, Zone | **not started**: BEYOND's documented interfaces (TCP PangoScript, OSC, MIDI, HTTP server) are control-only; live frames need Pangolin's SDK (on request via sdk@pangolin.com). Scan Rate is a placeholder |
+| Bridge: plugin streams frames over TCP to `lasermap_bridge` on the laser PC (wire format in `src/lasermap/wire.h`); Zone 1-16 and scan rate (kpps) travel with every frame | done and tested here (unit tests, loopback, independent Python sender); **plugin side not yet run in Resolume** |
+| BEYOND sink inside the bridge (frames -> a BEYOND projection zone) | **not started**: BEYOND's documented interfaces (TCP PangoScript, OSC, MIDI, HTTP server) are control-only; live frames need Pangolin's SDK (on request via sdk@pangolin.com). Today the bridge only reports statistics and can record ILDA |
 | Sweep Style "Trace", Resolume Link | **not started** |
 
 Nothing here has been tested with BEYOND or a real laser.
+
+## Bridge (plugin -> laser PC)
+
+Same shape as other Resolume-to-BEYOND tools: a plugin in Resolume and a small helper on the computer that
+drives the laser.
+
+1. On the laser PC run `lasermap_bridge` (port 7788 by default; `--ild out.ild` also records what it receives).
+   Allow it through the firewall on the wired network adapter.
+2. In the LaserMap effect: **Output > Bridge Address** (`host:port`, default `127.0.0.1:7788`), pick a **Zone**,
+   tick **Send To Bridge**. The toggle's label shows `Bridge: connected, N fr/s`.
+3. The plugin only sends what has passed **SafetyGuard**; with **Armed** off it sends empty frames (a live
+   connection, no light). The helper's status line shows `CONNECTED`, frames per second and zone.
+
+The helper currently has no BEYOND sink; that needs Pangolin's SDK.
 
 ## Prebuilt Windows plugin
 
@@ -38,6 +53,9 @@ cmake -S . -B build && cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/lasermap_cli - build/preview.svg      # built-in test pattern
 ./build/lasermap_cli in.ppm out.svg 0.5       # your own P6/P5 image, threshold 0.5
+./build/lasermap_bridge --seconds 10          # bridge helper (statistics)
+# demo video: python3 tools/demo/make_scene.py scene.ppm; ./build/lasermap_demo scene.ppm frames.bin;
+#             python3 tools/demo/render_video.py frames.bin scene.ppm out.mp4
 ```
 
 ## Build the Resolume plugin

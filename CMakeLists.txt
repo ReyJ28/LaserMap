@@ -11,6 +11,8 @@ add_library(lasermap_core
   src/lasermap/trace.cpp
   src/lasermap/modes.cpp
   src/lasermap/ilda.cpp
+  src/lasermap/wire.cpp
+  src/lasermap/net.cpp
   src/lasermap/safety.cpp)
 target_include_directories(lasermap_core PUBLIC src)
 if(MSVC)
@@ -18,6 +20,15 @@ if(MSVC)
 else()
   target_compile_options(lasermap_core PRIVATE -Wall -Wextra)
 endif()
+
+find_package(Threads REQUIRED)
+target_link_libraries(lasermap_core PUBLIC Threads::Threads)
+if(WIN32)
+  target_link_libraries(lasermap_core PUBLIC ws2_32)
+endif()
+
+add_executable(lasermap_bridge tools/lasermap_bridge.cpp)
+target_link_libraries(lasermap_bridge PRIVATE lasermap_core)
 
 add_executable(lasermap_cli tools/lasermap_cli.cpp)
 target_link_libraries(lasermap_cli PRIVATE lasermap_core)
