@@ -7,10 +7,12 @@
 
 #include "lasermap/ilda.h"
 #include <atomic>
+#include <cstring>
 #include <chrono>
 #include <mutex>
 #include <thread>
 
+#include "lasermap/beyond_sink.h"
 #include "lasermap/modes.h"
 #include "lasermap/net.h"
 #include "lasermap/wire.h"
@@ -413,7 +415,114 @@ static void testWireAndBridge() {
   CHECK(!orphan.connected());
 }
 
+// ---- BEYOND SDK mock ----
+struct MockSdk {
+  std::vector<std::string> calls;
+  std::string lastName;
+  int lastCount = 0, lastRate = 0;
+  std::vector<SdkPoint> lastPts;
+  uint8_t lastZones[256] = {};
+  bool ready = true;
+  int sends = 0;
+};
+static MockSdk g_sdk;
+static int mockCreate() { g_sdk.calls.push_back("create"); return 1; }
+static int mockDestroy() { g_sdk.calls.push_back("destroy"); return 1; }
+static int mockReady() { return g_sdk.ready ? 1 : 0; }
+static int mockCreateImage(int z, const char* n) { g_sdk.calls.push_back("createimage:" + std::to_string(z) + ":" + n); return 1; }
+static int mockDeleteImage(const char* n) { g_sdk.calls.push_back(std::string("deleteimage:") + n); return 1; }
+static int mockSend(const char* n, int count, void* pts, void* zones, int rate) {
+  g_sdk.lastName = n; g_sdk.lastCount = count; g_sdk.lastRate = rate; ++g_sdk.sends;
+  g_sdk.lastPts.assign(static_cast<SdkPoint*>(pts), static_cast<SdkPoint*>(pts) + count);
+  std::memcpy(g_sdk.lastZones, zones, 256);
+  return 1;
+}
+static SdkApi mockApi() {
+  SdkApi a;
+  a.create = mockCreate; a.destroy = mockDestroy; a.beyondExeReady = mockReady; a.createZoneImage = mockCreateImage;
+  a.deleteZoneImage = mockDeleteImage; a.sendFrameToImage = mockSend;
+  return a;
+}
+
+static void testBeyondSink() {
+  g_sdk = MockSdk();
+  WireFrame f;
+  f.zone = 3; f.kpps = 25;
+  f.pts = {{-1.f, 1.f, 1.f, 0.f, 0.f, true}, {0.5f, -0.5f, 1.f, 0.5f, 0.f, false}, {2.f, -2.f, 0.f, 0.f, 1.f, false}};
+  {
+    BeyondSink::Options o;
+    BeyondSink sink(mockApi(), o);
+    CHECK(sink.connect() && sink.ready());
+    sink.onFrame(f);
+    CHECK(g_sdk.calls.size() == 2 && g_sdk.calls[0] == "create" && g_sdk.calls[1] == "createimage:2:LaserMap.Z3");
+    CHECK(g_sdk.lastName == "LaserMap.Z3" && g_sdk.lastCount == 3 && g_sdk.lastRate == -25000);
+    CHECK(g_sdk.lastZones[0] == 3 && g_sdk.lastZones[1] == 0);  // 1-based zone list, zero terminated
+    CHECK(g_sdk.lastPts.size() == 3);
+    CHECK(g_sdk.lastPts[0].color == 0 && g_sdk.lastPts[0].x == -32000.f && g_sdk.lastPts[0].y == 32000.f);  // blanked -> black
+    CHECK(g_sdk.lastPts[1].color == (255 | (128 << 8)));  // Windows COLORREF 0x00BBGGRR: R low, G next
+    CHECK(g_sdk.lastPts[2].color == (255 << 16));
+    CHECK(g_sdk.lastPts[2].x == 32000.f && g_sdk.lastPts[2].y == -32000.f);  // out-of-range input is clamped
+    CHECK(sizeof(SdkPoint) == 20 && g_sdk.lastPts[0].z == 0.f && g_sdk.lastPts[0].status == 0);
+    sink.onFrame(f);
+    int creates = 0; for (const auto& c : g_sdk.calls) if (c.rfind("createimage", 0) == 0) ++creates;
+    CHECK(creates == 1);  // the zone image is created once
+
+    // Empty frame -> a single black point, never a zero-length frame.
+    WireFrame e; e.zone = 3; e.kpps = 25;
+    sink.onFrame(e);
+    CHECK(g_sdk.lastCount == 1 && g_sdk.lastPts[0].color == 0);
+
+    // Over-long frames are truncated to the SDK's 8192 point limit.
+    WireFrame big; big.zone = 3; big.pts.assign(10000, Point{0.f, 0.f, 1.f, 1.f, 1.f, false});
+    sink.onFrame(big);
+    CHECK(g_sdk.lastCount == 8192);
+
+    // Flips.
+    std::vector<SdkPoint> out;
+    BeyondSink::Options fl; fl.flipX = true; fl.flipY = true;
+    BeyondSink::convert(f, fl, out);
+    CHECK(out[0].x == 32000.f && out[0].y == -32000.f);
+
+    // Watchdog: a lit frame followed by silence must be followed by a blank frame.
+    BeyondSink::Options quick; quick.watchdogSec = 0.05;
+    g_sdk = MockSdk();
+    BeyondSink w(mockApi(), quick);
+    w.onFrame(f);
+    const int before = g_sdk.sends;
+    w.idle();
+    CHECK(g_sdk.sends == before);  // not yet
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    w.idle();
+    CHECK(g_sdk.sends == before + 1 && g_sdk.lastCount == 1 && g_sdk.lastPts[0].color == 0);
+    w.idle();
+    CHECK(g_sdk.sends == before + 1);  // only once
+  }
+  // Destroying the sink blanks, deletes its images and releases the SDK; it never arms or blacks out.
+  bool tidy = false, leaked = false;
+  for (const auto& c : g_sdk.calls) {
+    if (c == "deleteimage:LaserMap.Z3") tidy = true;
+    if (c.find("enable") != std::string::npos || c.find("blackout") != std::string::npos) leaked = true;
+  }
+  CHECK(tidy && !leaked && g_sdk.calls.back() == "destroy");
+
+  // BEYOND not ready: frames are dropped quietly and no zone image is created.
+  g_sdk = MockSdk();
+  g_sdk.ready = false;
+  {
+    BeyondSink s(mockApi(), BeyondSink::Options{});
+    s.onFrame(f);
+    CHECK(!s.ready() && g_sdk.sends == 0 && s.zonesActive() == 0);
+    g_sdk.ready = true;
+    s.onFrame(f);
+    CHECK(s.ready() && g_sdk.sends == 1);
+  }
+  // Missing DLL on a platform without BEYOND reports a reason instead of crashing.
+  SdkApi none; std::string err;
+  CHECK(!loadSdkApi("definitely-not-here.dll", none, err) && !err.empty());
+}
+
 int main() {
+  testBeyondSink();
   testWireAndBridge();
   testIlda();
   testExtract();

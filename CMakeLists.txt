@@ -13,6 +13,7 @@ add_library(lasermap_core
   src/lasermap/ilda.cpp
   src/lasermap/wire.cpp
   src/lasermap/net.cpp
+  src/lasermap/beyond_sink.cpp
   src/lasermap/safety.cpp)
 target_include_directories(lasermap_core PUBLIC src)
 if(MSVC)

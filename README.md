@@ -21,7 +21,7 @@ from, and was not derived from the binaries of, any other product.
 | FFGL plugin wrapper | compiled and linked on Windows; **only partially tested in Resolume** |
 | ILDA recording: **Record** toggle writes the generated frames to `Documents/LaserMap/recording-<time>.ild` (ILDA format 5, 2D true colour); `lasermap_cli ... out.ild` exports a single frame | done, encoder unit-tested; **plugin side not run in Resolume**; import into BEYOND untested |
 | Bridge: plugin streams frames over TCP to `lasermap_bridge` on the laser PC (wire format in `src/lasermap/wire.h`); Zone 1-16 and scan rate (kpps) travel with every frame | done and tested here (unit tests, loopback, independent Python sender); **plugin side not yet run in Resolume** |
-| BEYOND sink inside the bridge (frames -> a BEYOND projection zone) | **not started**: BEYOND's documented interfaces (TCP PangoScript, OSC, MIDI, HTTP server) are control-only; live frames need Pangolin's SDK (on request via sdk@pangolin.com). Today the bridge only reports statistics and can record ILDA |
+| BEYOND sink inside the bridge (`--beyond`): frames -> an "SDK Image" in the chosen projection zone via Pangolin's SDK DLL (`ldbCreateZoneImage`, `ldbSendFrameToImage`) | written from the SDK document and unit-tested against a mock of the SDK; **never run against a real BEYOND or the real DLL**. Never calls enable-output or blackout. Watchdog blanks a zone if frames stop for 1 s |
 | Sweep Style "Trace", Resolume Link | **not started** |
 
 Nothing here has been tested with BEYOND or a real laser.
@@ -38,7 +38,10 @@ drives the laser.
 3. The plugin only sends what has passed **SafetyGuard**; with **Armed** off it sends empty frames (a live
    connection, no light). The helper's status line shows `CONNECTED`, frames per second and zone.
 
-The helper currently has no BEYOND sink; that needs Pangolin's SDK.
+To drive BEYOND, run the helper on the BEYOND PC with the SDK DLL next to it (or `--sdk-dll path`):
+`lasermap_bridge --beyond [--flip-x] [--flip-y]`. Zones are BEYOND's own numbers; arming and blackout stay in BEYOND.
+The frames land as an SDK Image per zone (`LaserMap.Z<n>`), which BEYOND processes with the zone's geometric correction.
+Use **Grid** mode to line the laser up, and `--flip-y` / `--flip-x` if the picture comes out mirrored.
 
 ## Prebuilt Windows plugin
 

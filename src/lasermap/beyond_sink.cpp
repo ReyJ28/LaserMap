@@ -1,0 +1,145 @@
+// LaserMap — Copyright (c) 2026 ReyJ28. All rights reserved. See LICENSE.
+#include "beyond_sink.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+namespace lasermap {
+
+namespace {
+int32_t colorRef(float r, float g, float b) {
+  auto c = [](float v) { return int(std::lround(std::clamp(std::isfinite(v) ? v : 0.f, 0.f, 1.f) * 255.f)); };
+  return int32_t(c(r) | (c(g) << 8) | (c(b) << 16));
+}
+}  // namespace
+
+void BeyondSink::convert(const WireFrame& f, const Options& o, std::vector<SdkPoint>& out) {
+  out.clear();
+  const size_t n = std::min<size_t>(f.pts.size(), kMaxPoints);
+  out.reserve(std::max<size_t>(n, 1));
+  for (size_t i = 0; i < n; ++i) {
+    const Point& p = f.pts[i];
+    SdkPoint q{};
+    float x = std::clamp(std::isfinite(p.x) ? p.x : 0.f, -1.f, 1.f), y = std::clamp(std::isfinite(p.y) ? p.y : 0.f, -1.f, 1.f);
+    q.x = (o.flipX ? -x : x) * o.scale;
+    q.y = (o.flipY ? -y : y) * o.scale;
+    q.z = 0.f;
+    // A blanked point is a black point: BEYOND's SDK image has no blank flag ("Status ... leave it zero").
+    q.color = p.blank ? 0 : colorRef(p.r, p.g, p.b);
+    out.push_back(q);
+  }
+  if (out.empty()) out.push_back(SdkPoint{});  // "no light": one black point at the centre
+}
+
+BeyondSink::BeyondSink(SdkApi api, Options opt) : api_(api), opt_(opt) {}
+
+BeyondSink::~BeyondSink() {
+  std::lock_guard<std::mutex> lk(m_);
+  if (!api_.complete()) return;
+  if (ready_) {
+    for (int z : zones_) sendBlankLocked(z);
+    for (int z : zones_) api_.deleteZoneImage(imageName(z).c_str());
+  }
+  if (created_) api_.destroy();
+}
+
+bool BeyondSink::connect() {
+  std::lock_guard<std::mutex> lk(m_);
+  if (!api_.complete()) return false;
+  if (!created_) created_ = api_.create() == 1;
+  if (!created_) return false;
+  ready_ = api_.beyondExeReady() == 1;
+  return ready_;
+}
+
+void BeyondSink::sendBlankLocked(int zone) {
+  SdkPoint black{};
+  uint8_t zl[256] = {};
+  zl[0] = uint8_t(zone);
+  api_.sendFrameToImage(imageName(zone).c_str(), 1, &black, zl, 100);
+}
+
+void BeyondSink::onFrame(const WireFrame& f) {
+  if (!ready_ && !connect()) return;
+  std::lock_guard<std::mutex> lk(m_);
+  const int zone = std::clamp<int>(f.zone, 1, 200);
+  if (!zones_.count(zone)) {
+    api_.createZoneImage(zone - 1, imageName(zone).c_str());  // BEYOND counts zones from 0; the list below from 1
+    zones_.insert(zone);
+  }
+  std::vector<SdkPoint> pts;
+  convert(f, opt_, pts);
+  uint8_t zl[256] = {};
+  zl[0] = uint8_t(zone);  // zone list: 1-based indexes, 0 terminates
+  const int rate = f.kpps > 0 ? -int(f.kpps) * 1000 : 100;  // negative = points per second, positive = percent
+  const int count = int(pts.size());
+  api_.sendFrameToImage(imageName(zone).c_str(), count, pts.data(), zl, rate);
+  ++sent_;
+  lit_ = !f.pts.empty();
+  last_ = std::chrono::steady_clock::now();
+}
+
+void BeyondSink::idle() {
+  std::lock_guard<std::mutex> lk(m_);
+  if (!ready_ || !lit_) return;
+  const double age = std::chrono::duration<double>(std::chrono::steady_clock::now() - last_).count();
+  if (age < opt_.watchdogSec) return;
+  for (int z : zones_) sendBlankLocked(z);  // the plugin went quiet: do not leave the last frame on the wall
+  lit_ = false;
+}
+
+int BeyondSink::zonesActive() const {
+  std::lock_guard<std::mutex> lk(m_);
+  return int(zones_.size());
+}
+
+#ifdef _WIN32
+bool loadSdkApi(const std::string& dllPath, SdkApi& api, std::string& error) {
+  std::vector<std::string> names;
+  if (!dllPath.empty()) names = {dllPath};
+  else names = {"BEYONDIOx64.dll", "BEYONDIO.dll", "BeyondIO.dll", "BEYOND_SDK.dll", "BeyondSdk.dll"};
+  HMODULE h = nullptr;
+  DWORD lastErr = 0;
+  for (const auto& n : names) {
+    h = LoadLibraryA(n.c_str());
+    if (h) break;
+    lastErr = GetLastError();
+  }
+  if (!h) {
+    error = lastErr == 193 ? "the SDK DLL is not a 64-bit DLL (error 193); this build is 64-bit"
+                           : "could not load the BEYOND SDK DLL (give its path with --sdk-dll), Windows error " + std::to_string(lastErr);
+    return false;
+  }
+  auto get = [&](const char* base) -> FARPROC {
+    for (const char* pre : {"ldb", "ld"}) {  // the SDK document uses both prefixes
+      FARPROC p = GetProcAddress(h, (std::string(pre) + base).c_str());
+      if (p) return p;
+    }
+    return nullptr;
+  };
+  api.create = reinterpret_cast<int (*)()>(get("Create"));
+  api.destroy = reinterpret_cast<int (*)()>(get("Destroy"));
+  api.beyondExeReady = reinterpret_cast<int (*)()>(get("BeyondExeReady"));
+  api.createZoneImage = reinterpret_cast<int (*)(int, const char*)>(get("CreateZoneImage"));
+  api.deleteZoneImage = reinterpret_cast<int (*)(const char*)>(get("DeleteZoneImage"));
+  api.sendFrameToImage = reinterpret_cast<int (*)(const char*, int, void*, void*, int)>(get("SendFrameToImage"));
+  if (!api.complete()) {
+    error = "the DLL loaded but is missing some of the functions LaserMap needs (Create, Destroy, BeyondExeReady, "
+            "CreateZoneImage, DeleteZoneImage, SendFrameToImage)";
+    return false;
+  }
+  return true;
+}
+#else
+bool loadSdkApi(const std::string&, SdkApi&, std::string& error) {
+  error = "the BEYOND SDK is a Windows DLL; this helper can only drive BEYOND on Windows";
+  return false;
+}
+#endif
+
+}  // namespace lasermap
