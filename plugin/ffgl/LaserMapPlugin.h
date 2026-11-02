@@ -185,6 +185,7 @@ private:
 	std::string bridgeAddr = "127.0.0.1:7788";
 	std::string textBuf;
 	uint64_t lastBridgeSent = 0;
+	int lastBridgeState = -1;  // -1 off, 0 connecting, 1 connected (for log lines)
 	std::vector< lasermap::PointFrame > recorded;
 	bool wasRecording = false;
 	std::string lastRecordPath;

@@ -733,13 +733,21 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 		if( host.empty() )
 			host = "127.0.0.1";
 		if( !bridge || bridge->host() != host || bridge->port() != port )
+		{
 			bridge = std::make_unique< lasermap::TcpClientOutput >( host, (uint16_t)port );
+			lastBridgeState = 0;
+			writeLog( "bridge: connecting to " + host + ":" + std::to_string( port ) + ", zone " + std::to_string( 1 + opt( PT_ZONE ) ) );
+		}
 		bridge->setZone( (uint8_t)( 1 + opt( PT_ZONE ) ) );
 		bridge->setKpps( (uint16_t)( 5 + f( PT_SCAN_RATE ) * 55 ) );
 		bridge->send( safe );  // empty while Armed is off: the bridge sees "no light" and a live connection
 	}
 	else if( bridge )
+	{
 		bridge.reset();
+		lastBridgeState = -1;
+		writeLog( "bridge: stopped (Send To Bridge is off)" );
+	}
 
 	// ---- Video mask from the chosen mode ----
 	if( videoState.mode != 4 )
@@ -789,6 +797,12 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 		if( bridge )
 		{
 			const uint64_t sent = bridge->framesSent();
+			const int state = bridge->connected() ? 1 : 0;
+			if( state != lastBridgeState )
+			{
+				lastBridgeState = state;
+				writeLog( state ? "bridge: connected" : "bridge: not connected (is lasermap_bridge.exe running, and is the address right?)" );
+			}
 			if( bridge->connected() )
 				std::snprintf( buf, sizeof buf, "Bridge: connected, %d fr/s", (int)std::lround( double( sent - lastBridgeSent ) / 0.5 ) );
 			else
