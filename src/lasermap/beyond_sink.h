@@ -46,6 +46,9 @@ class BeyondSink {
     bool flipX = false, flipY = false;
     float scale = 32000.f;   // laser +-1 -> +-scale (BEYOND takes +-32K)
     double watchdogSec = 1.0;  // no frame for this long: send "no light" so BEYOND never holds a stale frame
+    // Non-empty: stream into an SDK Image that already exists inside a BEYOND cue (the "SDK Image inside Cue" mode of
+    // the SDK). Nothing is created or deleted; the image is found by this name. Empty: one zone image per zone.
+    std::string cueImageName;
   };
   BeyondSink(SdkApi api, Options opt);
   ~BeyondSink();
@@ -64,7 +67,7 @@ class BeyondSink {
 
  private:
   void sendBlankLocked(int zone);
-  static std::string imageName(int zone) { return "LaserMap.Z" + std::to_string(zone); }
+  std::string imageName(int zone) const { return opt_.cueImageName.empty() ? "LaserMap.Z" + std::to_string(zone) : opt_.cueImageName; }
   SdkApi api_;
   Options opt_;
   mutable std::mutex m_;

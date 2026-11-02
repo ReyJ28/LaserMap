@@ -516,6 +516,22 @@ static void testBeyondSink() {
     s.onFrame(f);
     CHECK(s.ready() && g_sdk.sends == 1);
   }
+  // Cue-image mode: stream into an existing named image; never create or delete anything.
+  g_sdk = MockSdk();
+  {
+    BeyondSink::Options co; co.cueImageName = "LaserMap";
+    BeyondSink cs(mockApi(), co);
+    cs.onFrame(f);
+    CHECK(g_sdk.lastName == "LaserMap" && g_sdk.lastCount == 3);
+    bool created = false;
+    for (const auto& c : g_sdk.calls) if (c.rfind("createimage", 0) == 0) created = true;
+    CHECK(!created);
+  }
+  {
+    bool deleted = false;
+    for (const auto& c : g_sdk.calls) if (c.rfind("deleteimage", 0) == 0) deleted = true;
+    CHECK(!deleted && g_sdk.calls.back() == "destroy");
+  }
   // Missing DLL on a platform without BEYOND reports a reason instead of crashing.
   SdkApi none; std::string err;
   CHECK(!loadSdkApi("definitely-not-here.dll", none, err) && !err.empty());

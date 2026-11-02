@@ -1,7 +1,8 @@
 // LaserMap — Copyright (c) 2026 ReyJ28. All rights reserved. See LICENSE.
 // The bridge helper: runs on the computer that drives the laser (the BEYOND PC), receives the frames the LaserMap
 // plugin streams over the network and passes them to a sink: statistics, an ILDA recorder, and BEYOND.
-//   lasermap_bridge [--port 7788] [--ild out.ild] [--seconds N] [--beyond [--sdk-dll path] [--flip-x] [--flip-y]]
+//   lasermap_bridge [--port 7788] [--ild out.ild] [--seconds N] [--beyond [--sdk-dll path] [--cue-image NAME] [--flip-x] [--flip-y]]
+// --cue-image NAME streams into an SDK Image you placed inside a BEYOND cue (use it in the grid or timeline).
 // --beyond hands the frames to Pangolin BEYOND through its SDK DLL (Windows x64). It never arms, disarms or blacks out.
 #include <atomic>
 #include <chrono>
@@ -28,16 +29,17 @@ int main(int argc, char** argv) {
   std::string ildPath;
   double seconds = 0;
   bool beyond = false, flipX = false, flipY = false;
-  std::string sdkDll;
+  std::string sdkDll, cueImage;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--port") && i + 1 < argc) port = uint16_t(std::atoi(argv[++i]));
     else if (!std::strcmp(argv[i], "--ild") && i + 1 < argc) ildPath = argv[++i];
     else if (!std::strcmp(argv[i], "--seconds") && i + 1 < argc) seconds = std::atof(argv[++i]);
     else if (!std::strcmp(argv[i], "--beyond")) beyond = true;
     else if (!std::strcmp(argv[i], "--sdk-dll") && i + 1 < argc) sdkDll = argv[++i];
+    else if (!std::strcmp(argv[i], "--cue-image") && i + 1 < argc) cueImage = argv[++i];
     else if (!std::strcmp(argv[i], "--flip-x")) flipX = true;
     else if (!std::strcmp(argv[i], "--flip-y")) flipY = true;
-    else { std::fprintf(stderr, "usage: %s [--port N] [--ild out.ild] [--seconds N] [--beyond [--sdk-dll path] [--flip-x] [--flip-y]]\n", argv[0]); return 2; }
+    else { std::fprintf(stderr, "usage: %s [--port N] [--ild out.ild] [--seconds N] [--beyond [--sdk-dll path] [--cue-image NAME] [--flip-x] [--flip-y]]\n", argv[0]); return 2; }
   }
   std::signal(SIGINT, onSignal);
   std::signal(SIGTERM, onSignal);
@@ -52,7 +54,7 @@ int main(int argc, char** argv) {
     std::string err;
     if (!loadSdkApi(sdkDll, api, err)) { std::fprintf(stderr, "BEYOND: %s\n", err.c_str()); return 1; }
     BeyondSink::Options o;
-    o.flipX = flipX; o.flipY = flipY;
+    o.flipX = flipX; o.flipY = flipY; o.cueImageName = cueImage;
     sink = std::make_unique<BeyondSink>(api, o);
     std::printf("BEYOND SDK loaded (%s). Output arming stays in BEYOND; this helper only streams frames to zone images.\n", err.c_str());
   }

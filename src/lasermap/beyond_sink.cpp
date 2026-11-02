@@ -43,7 +43,8 @@ BeyondSink::~BeyondSink() {
   if (!api_.complete()) return;
   if (ready_) {
     for (int z : zones_) sendBlankLocked(z);
-    for (int z : zones_) api_.deleteZoneImage(imageName(z).c_str());
+    if (opt_.cueImageName.empty())  // images inside a cue belong to the user's show: never delete those
+      for (int z : zones_) api_.deleteZoneImage(imageName(z).c_str());
   }
   if (created_) api_.destroy();
 }
@@ -69,7 +70,8 @@ void BeyondSink::onFrame(const WireFrame& f) {
   std::lock_guard<std::mutex> lk(m_);
   const int zone = std::clamp<int>(f.zone, 1, 200);
   if (!zones_.count(zone)) {
-    api_.createZoneImage(zone - 1, imageName(zone).c_str());  // BEYOND counts zones from 0; the list below from 1
+    if (opt_.cueImageName.empty())
+      api_.createZoneImage(zone - 1, imageName(zone).c_str());  // BEYOND counts zones from 0; the list below from 1
     zones_.insert(zone);
   }
   std::vector<SdkPoint> pts;

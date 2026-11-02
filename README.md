@@ -41,6 +41,8 @@ drives the laser.
 To drive BEYOND, run the 32-bit helper on the BEYOND PC with `BEYONDIO.dll` next to it (not included; it is Pangolin's) (or `--sdk-dll path`):
 `lasermap_bridge --beyond [--flip-x] [--flip-y]`. Zones are BEYOND's own numbers; arming and blackout stay in BEYOND.
 The frames land as an SDK Image per zone (`LaserMap.Z<n>`), which BEYOND processes with the zone's geometric correction.
+To use LaserMap inside a cue (grid or timeline) instead: add an SDK Image named e.g. `LaserMap` to a BEYOND cue, then run
+`lasermap_bridge --beyond --cue-image LaserMap`. The helper then only streams into that image and creates/deletes nothing.
 Use **Grid** mode to line the laser up, and `--flip-y` / `--flip-x` if the picture comes out mirrored.
 
 ## Prebuilt Windows plugin
