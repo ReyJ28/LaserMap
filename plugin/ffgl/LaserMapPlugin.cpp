@@ -194,7 +194,7 @@ LaserMapPlugin::LaserMapPlugin() :
 		SetParamGroup( i, d.group );
 	}
 
-	FFGLLog::LogToHost( "Created LaserMap effect" );
+	FFGLLog::LogToHost( "Created LaserMap effect, build " __DATE__ " " __TIME__ " (diagnostics v2)" );
 }
 
 LaserMapPlugin::~LaserMapPlugin() = default;
