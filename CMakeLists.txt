@@ -22,6 +22,9 @@ endif()
 add_executable(lasermap_cli tools/lasermap_cli.cpp)
 target_link_libraries(lasermap_cli PRIVATE lasermap_core)
 
+add_executable(lasermap_demo tools/lasermap_demo.cpp)
+target_link_libraries(lasermap_demo PRIVATE lasermap_core)
+
 enable_testing()
 add_executable(lasermap_tests tests/test_core.cpp)
 target_link_libraries(lasermap_tests PRIVATE lasermap_core)
