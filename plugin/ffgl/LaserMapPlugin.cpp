@@ -10,6 +10,7 @@
 #include <exception>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <sstream>
 
@@ -131,13 +132,35 @@ void main()
 }
 )";
 
-// Writes a message to Resolume's log, once per distinct text (so a per-frame problem can't flood it).
+// Appends a line to Documents/LaserMap/lasermap.log (a file we control, easy to find) and to Resolume's log.
+void writeLog( const std::string& msg )
+{
+	FFGLLog::LogToHost( ( "LaserMap: " + msg ).c_str() );
+	try
+	{
+		const char* home = std::getenv( "USERPROFILE" );
+		if( !home )
+			home = std::getenv( "HOME" );
+		const std::filesystem::path dir = std::filesystem::path( home ? home : "." ) / "Documents" / "LaserMap";
+		std::filesystem::create_directories( dir );
+		std::ofstream f( dir / "lasermap.log", std::ios::app );
+		const std::time_t t = std::time( nullptr );
+		char stamp[ 32 ];
+		std::strftime( stamp, sizeof stamp, "%Y-%m-%d %H:%M:%S", std::localtime( &t ) );
+		f << stamp << "  " << msg << "\n";
+	}
+	catch( ... )
+	{
+	}
+}
+
+// Logs once per distinct text, so a per-frame problem can't flood the log.
 void logOnce( const std::string& msg )
 {
 	static std::set< std::string > seen;
 	if( seen.size() > 50 || !seen.insert( msg ).second )
 		return;
-	FFGLLog::LogToHost( ( "LaserMap: " + msg ).c_str() );
+	writeLog( msg );
 }
 
 // Logs any pending OpenGL error with a label saying where it happened.
@@ -194,7 +217,7 @@ LaserMapPlugin::LaserMapPlugin() :
 		SetParamGroup( i, d.group );
 	}
 
-	FFGLLog::LogToHost( "Created LaserMap effect, build " __DATE__ " " __TIME__ " (diagnostics v2)" );
+	writeLog( "effect created, build " __DATE__ " " __TIME__ " (diagnostics v3, log file)" );
 }
 
 LaserMapPlugin::~LaserMapPlugin() = default;
