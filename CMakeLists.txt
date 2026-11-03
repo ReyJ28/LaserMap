@@ -28,6 +28,9 @@ if(WIN32)
   target_link_libraries(lasermap_core PUBLIC ws2_32)
 endif()
 
+add_executable(lasermap_trace_video tools/lasermap_trace_video.cpp)
+target_link_libraries(lasermap_trace_video PRIVATE lasermap_core)
+
 add_executable(lasermap_bridge tools/lasermap_bridge.cpp)
 target_link_libraries(lasermap_bridge PRIVATE lasermap_core)
 
