@@ -63,3 +63,30 @@ jobs:
           name: LaserMap-bridge-win32
           path: out32/Release/lasermap_bridge.exe
           if-no-files-found: error
+
+  # One download for users: plugin + 32-bit helper + installer.
+  package:
+    needs: [windows-plugin, windows-bridge32]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: LaserMap-windows-x64
+          path: dl/plugin
+      - uses: actions/download-artifact@v4
+        with:
+          name: LaserMap-bridge-win32
+          path: dl/bridge
+      - name: Assemble
+        run: |
+          mkdir -p LaserMap-Windows
+          cp dl/plugin/LaserMap.dll LaserMap-Windows/
+          cp dl/bridge/lasermap_bridge.exe LaserMap-Windows/
+          cp packaging/Install-LaserMap.ps1 packaging/README-FIRST.txt LaserMap-Windows/
+          cp LICENSE LaserMap-Windows/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LaserMap-Windows
+          path: LaserMap-Windows
+          if-no-files-found: error

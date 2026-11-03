@@ -26,6 +26,13 @@ from, and was not derived from the binaries of, any other product.
 
 Nothing here has been tested with BEYOND or a real laser.
 
+## Quick start (Windows, Resolume and BEYOND on one PC)
+
+Download the **LaserMap-Windows** artifact (latest run in the Actions tab), unzip, close Resolume, right-click
+`Install-LaserMap.ps1` > Run with PowerShell. Then in Resolume: LaserMap effect on a playing clip, tick **Send To BEYOND**,
+pick the **Zone**, tick **Armed**, turn on **Grid**. The plugin starts the helper by itself (**Auto Start Helper**), the
+helper finds `BEYONDIO.dll` in your BEYOND folder, and it closes itself 20 s after the plugin disconnects.
+
 ## Bridge (plugin -> laser PC)
 
 Same shape as other Resolume-to-BEYOND tools: a plugin in Resolume and a small helper on the computer that

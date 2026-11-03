@@ -3,10 +3,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <filesystem>
 #endif
 
 namespace lasermap {
@@ -150,14 +152,48 @@ template <> struct Call<int(const char*, int, void*, void*, int)> {
 };
 }  // namespace
 
+// Looks for BEYONDIO.dll next to the helper, then inside any Pangolin / BEYOND folder under Program Files and friends.
+static std::vector<std::string> candidateSdkPaths() {
+  namespace fs = std::filesystem;
+  std::vector<std::string> out;
+  auto tryDir = [&](const fs::path& d) {
+    std::error_code ec;
+    const fs::path f = d / "BEYONDIO.dll";
+    if (fs::exists(f, ec)) out.push_back(f.string());
+  };
+  char exe[MAX_PATH] = {};
+  if (GetModuleFileNameA(nullptr, exe, MAX_PATH)) tryDir(fs::path(exe).parent_path());
+  tryDir(fs::current_path());
+  auto lower = [](std::string s) { for (auto& c : s) c = char(std::tolower(static_cast<unsigned char>(c))); return s; };
+  for (const char* var : {"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData", "PUBLIC"}) {
+    const char* v = std::getenv(var);
+    if (!v) continue;
+    std::error_code ec;
+    for (fs::directory_iterator it(v, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+      const std::string name = lower(it->path().filename().string());
+      if (name.find("pangolin") == std::string::npos && name.find("beyond") == std::string::npos) continue;
+      tryDir(it->path());
+      std::error_code ec2;
+      for (fs::recursive_directory_iterator r(it->path(), fs::directory_options::skip_permission_denied, ec2), rend; !ec2 && r != rend; r.increment(ec2)) {
+        if (r.depth() > 3) { r.disable_recursion_pending(); continue; }
+        if (r->is_directory(ec2)) tryDir(r->path());
+      }
+    }
+  }
+  return out;
+}
+
 bool loadSdkApi(const std::string& dllPath, SdkApi& api, std::string& error) {
   std::vector<std::string> names;
   if (!dllPath.empty()) names = {dllPath};
-  else names = {"BEYONDIO.dll", "BEYONDIOx64.dll", "BeyondIO.dll"};
+  else {
+    names = {"BEYONDIO.dll"};
+    for (const auto& c : candidateSdkPaths()) names.push_back(c);
+  }
   HMODULE h = nullptr;
   DWORD lastErr = 0;
   for (const auto& n : names) {
-    h = LoadLibraryA(n.c_str());
+    h = LoadLibraryExA(n.c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);  // also finds the DLL's own neighbours
     if (h) break;
     lastErr = GetLastError();
   }

@@ -26,9 +26,10 @@
 	X( SCAN_RATE, "Scan Rate", "Output", S, 0.45, "" )                                         \
 	X( VIDEO_DELAY, "Video Delay", "Output", S, 0, "" )                                        \
 	X( RECORD, "Record", "Output", B, 0, "" )                                                  \
-	X( SEND, "Send To Bridge", "Output", B, 0, "" )                                            \
+	X( SEND, "Send To BEYOND", "Output", B, 0, "" )                                            \
 	X( ZONE, "Zone", "Output", O, 0, "Zone 1|Zone 2|Zone 3|Zone 4|Zone 5|Zone 6|Zone 7|Zone 8|Zone 9|Zone 10|Zone 11|Zone 12|Zone 13|Zone 14|Zone 15|Zone 16" ) \
 	X( BRIDGE_ADDR, "Bridge Address", "Output", T, 0, "127.0.0.1:7788" )                       \
+	X( AUTO_HELPER, "Auto Start Helper", "Output", B, 1, "" )                                  \
 	X( M_CLIP, "Trace Clip", "Modes", B, 1, "" )                                               \
 	X( M_BEAMS, "Beam Runners", "Modes", B, 0, "" )                                            \
 	X( M_SWEEP, "Sweep", "Modes", B, 0, "" )                                                   \
@@ -185,7 +186,10 @@ private:
 	std::string bridgeAddr = "127.0.0.1:7788";
 	std::string textBuf;
 	uint64_t lastBridgeSent = 0;
-	int lastBridgeState = -1;  // -1 off, 0 connecting, 1 connected (for log lines)
+	int lastBridgeState = -1;
+	void* helperProcess = nullptr;  // Windows process handle of the helper we started (HANDLE)
+	std::chrono::steady_clock::time_point lastHelperLaunch{};
+	void ensureHelper( const std::string& host, unsigned port );  // -1 off, 0 connecting, 1 connected (for log lines)
 	std::vector< lasermap::PointFrame > recorded;
 	bool wasRecording = false;
 	std::string lastRecordPath;

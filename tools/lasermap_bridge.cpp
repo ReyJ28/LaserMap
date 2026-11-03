@@ -1,6 +1,8 @@
 // LaserMap — Copyright (c) 2026 ReyJ28. All rights reserved. See LICENSE.
 // The bridge helper: runs on the computer that drives the laser (the BEYOND PC), receives the frames the LaserMap
 // plugin streams over the network and passes them to a sink: statistics, an ILDA recorder, and BEYOND.
+// On Windows the BEYOND link is on by default (use --no-beyond for statistics only). The plugin starts this helper
+// by itself with --exit-when-idle, so normally nobody launches it by hand.
 //   lasermap_bridge [--port 7788] [--ild out.ild] [--seconds N] [--beyond [--sdk-dll path] [--cue-image NAME] [--flip-x] [--flip-y]]
 // --test-pattern sends a grid and a moving circle to BEYOND with no plugin involved (to test the BEYOND side alone).
 // --cue-image NAME streams into an SDK Image you placed inside a BEYOND cue (use it in the grid or timeline).
@@ -34,7 +36,13 @@ int main(int argc, char** argv) {
   uint16_t port = 7788;
   std::string ildPath;
   double seconds = 0;
-  bool beyond = false, flipX = false, flipY = false;
+#ifdef _WIN32
+  bool beyond = true;  // on Windows the helper talks to BEYOND unless told otherwise
+#else
+  bool beyond = false;
+#endif
+  bool flipX = false, flipY = false;
+  double exitWhenIdle = 0;  // seconds without a plugin connection (after one has connected) before the helper quits itself
   std::string sdkDll, cueImage;
   bool testPattern = false;
   int testZone = 1;
@@ -43,13 +51,15 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--ild") && i + 1 < argc) ildPath = argv[++i];
     else if (!std::strcmp(argv[i], "--seconds") && i + 1 < argc) seconds = std::atof(argv[++i]);
     else if (!std::strcmp(argv[i], "--beyond")) beyond = true;
+    else if (!std::strcmp(argv[i], "--no-beyond")) beyond = false;
+    else if (!std::strcmp(argv[i], "--exit-when-idle") && i + 1 < argc) exitWhenIdle = std::atof(argv[++i]);
     else if (!std::strcmp(argv[i], "--sdk-dll") && i + 1 < argc) sdkDll = argv[++i];
     else if (!std::strcmp(argv[i], "--cue-image") && i + 1 < argc) cueImage = argv[++i];
     else if (!std::strcmp(argv[i], "--test-pattern")) testPattern = true;
     else if (!std::strcmp(argv[i], "--zone") && i + 1 < argc) testZone = std::atoi(argv[++i]);
     else if (!std::strcmp(argv[i], "--flip-x")) flipX = true;
     else if (!std::strcmp(argv[i], "--flip-y")) flipY = true;
-    else { std::fprintf(stderr, "usage: %s [--port N] [--ild out.ild] [--seconds N] [--beyond [--sdk-dll path] [--cue-image NAME] [--test-pattern [--zone N]] [--flip-x] [--flip-y]]\n", argv[0]); return 2; }
+    else { std::fprintf(stderr, "usage: %s [--port N] [--ild out.ild] [--seconds N] [--beyond [--sdk-dll path] [--cue-image NAME] [--test-pattern [--zone N]] [--flip-x] [--flip-y]] [--no-beyond] [--exit-when-idle SEC]\n", argv[0]); return 2; }
   }
   std::signal(SIGINT, onSignal);
   std::signal(SIGTERM, onSignal);
@@ -141,8 +151,16 @@ int main(int argc, char** argv) {
   const auto t0 = std::chrono::steady_clock::now();
   uint64_t lastFrames = 0, lastDelivered = 0;
   int tick = 0;
+  bool everConnected = false;
+  double idleFor = 0;
   while (!g_stop) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (server.clientConnected()) { everConnected = true; idleFor = 0; }
+    else if (everConnected) idleFor += 0.1;
+    if (exitWhenIdle > 0 && everConnected && idleFor >= exitWhenIdle) {
+      std::printf("The plugin disconnected %.0f s ago: closing (zone images are blanked and removed).\n", exitWhenIdle);
+      break;
+    }
     if (sink) { sink->idle(); if (!sink->ready() && tick % 10 == 0) sink->connect(); }
     if (++tick % 10 != 0) continue;
     const uint64_t fr = frames;

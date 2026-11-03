@@ -12,6 +12,9 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include <sstream>
 
 using namespace ffglex;
@@ -131,6 +134,33 @@ void main()
 	fragColor = vec4( color, 1.0 );
 }
 )";
+
+#ifdef _WIN32
+// Where the installer put the helper (or next to this plugin).
+std::wstring findHelperExe()
+{
+	namespace fs = std::filesystem;
+	std::vector< fs::path > c;
+	wchar_t buf[ MAX_PATH ] = {};
+	if( GetEnvironmentVariableW( L"LOCALAPPDATA", buf, MAX_PATH ) )
+		c.push_back( fs::path( buf ) / L"LaserMap" / L"lasermap_bridge.exe" );
+	HMODULE self = nullptr;
+	if( GetModuleHandleExW( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&findHelperExe, &self ) &&
+	    GetModuleFileNameW( self, buf, MAX_PATH ) )
+	{
+		const fs::path dir = fs::path( buf ).parent_path();
+		c.push_back( dir / L"lasermap_bridge.exe" );
+		c.push_back( dir / L"LaserMap" / L"lasermap_bridge.exe" );
+	}
+	for( const auto& p : c )
+	{
+		std::error_code ec;
+		if( fs::exists( p, ec ) )
+			return p.wstring();
+	}
+	return L"";
+}
+#endif
 
 // Appends a line to Documents/LaserMap/lasermap.log (a file we control, easy to find) and to Resolume's log.
 void writeLog( const std::string& msg )
@@ -309,7 +339,14 @@ void LaserMapPlugin::flushRecording()
 FFResult LaserMapPlugin::DeInitGL()
 {
 	flushRecording();
-	bridge.reset();
+	bridge.reset();  // disconnecting lets the helper (started with --exit-when-idle) shut itself down cleanly
+#ifdef _WIN32
+	if( helperProcess )
+	{
+		CloseHandle( (HANDLE)helperProcess );
+		helperProcess = nullptr;
+	}
+#endif
 	copyShader.FreeGLResources();
 	lineShader.FreeGLResources();
 	quad.Release();
@@ -738,6 +775,7 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 			lastBridgeState = 0;
 			writeLog( "bridge: connecting to " + host + ":" + std::to_string( port ) + ", zone " + std::to_string( 1 + opt( PT_ZONE ) ) );
 		}
+		ensureHelper( host, port );
 		bridge->setZone( (uint8_t)( 1 + opt( PT_ZONE ) ) );
 		bridge->setKpps( (uint16_t)( 5 + f( PT_SCAN_RATE ) * 55 ) );
 		bridge->send( safe );  // empty while Armed is off: the bridge sees "no light" and a live connection
@@ -811,8 +849,48 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 			SetParamDisplayName( PT_SEND, buf, true );
 		}
 		else
-			SetParamDisplayName( PT_SEND, "Send To Bridge", true );
+			SetParamDisplayName( PT_SEND, "Send To BEYOND", true );
 	}
+}
+
+// Starts lasermap_bridge.exe (hidden) when the bridge address is this computer and nothing is listening yet.
+void LaserMapPlugin::ensureHelper( const std::string& host, unsigned port )
+{
+#ifdef _WIN32
+	if( !on( PT_AUTO_HELPER ) || ( host != "127.0.0.1" && host != "localhost" ) )
+		return;
+	const auto now = std::chrono::steady_clock::now();
+	if( std::chrono::duration< double >( now - lastHelperLaunch ).count() < 6.0 )
+		return;  // give a freshly started helper time to come up
+	if( helperProcess && WaitForSingleObject( (HANDLE)helperProcess, 0 ) == WAIT_TIMEOUT )
+		return;  // our helper is still running
+	if( helperProcess )
+	{
+		CloseHandle( (HANDLE)helperProcess );
+		helperProcess = nullptr;
+	}
+	lastHelperLaunch = now;
+	const std::wstring exe = findHelperExe();
+	if( exe.empty() )
+	{
+		logOnce( "auto start: lasermap_bridge.exe not found (run Install-LaserMap.ps1, or start the helper yourself)" );
+		return;
+	}
+	std::wstring cmd = L"\"" + exe + L"\" --port " + std::to_wstring( port ) + L" --exit-when-idle 20";
+	STARTUPINFOW si{};
+	si.cb = sizeof si;
+	PROCESS_INFORMATION pi{};
+	if( CreateProcessW( nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi ) )
+	{
+		CloseHandle( pi.hThread );
+		helperProcess = pi.hProcess;
+		writeLog( "auto start: started the BEYOND helper" );
+	}
+	else
+		writeLog( "auto start: could not start the helper, Windows error " + std::to_string( GetLastError() ) );
+#else
+	(void)host; (void)port;
+#endif
 }
 
 void LaserMapPlugin::drawOverlay()
