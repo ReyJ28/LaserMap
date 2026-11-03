@@ -174,6 +174,7 @@ private:
 	VideoState videoState;
 	bool cannonWasActive = false;
 	int analysisW = 0, analysisH = 0;
+	unsigned outW = 1920, outH = 1080;  // size of the picture being drawn on (for preview line thickness)
 
 	std::chrono::steady_clock::time_point lastFrame;
 	bool haveLastFrame = false;

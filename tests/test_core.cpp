@@ -173,6 +173,24 @@ static void testExtract() {
   CHECK(mk.size() == size_t(f.w) * f.h);
 }
 
+static void testGridFitsFrame() {
+  ModeParams wide; wide.maskW = 160; wide.maskH = 90;  // 16:9
+  auto g = renderGrid(wide).points;
+  float minx = 9, maxx = -9, miny = 9, maxy = -9;
+  for (const auto& q : g) { minx = std::min(minx, q.x); maxx = std::max(maxx, q.x); miny = std::min(miny, q.y); maxy = std::max(maxy, q.y); }
+  CHECK(std::fabs(minx + 1.f) < 1e-4f && std::fabs(maxx - 1.f) < 1e-4f);        // fills the width
+  CHECK(std::fabs(maxy - 0.5625f) < 1e-3f && std::fabs(miny + 0.5625f) < 1e-3f);  // and exactly the height: no lines off-frame
+  ModeParams tall; tall.maskW = 90; tall.maskH = 160;  // portrait fits too
+  auto t = renderGrid(tall).points;
+  float tx = 0, ty = 0;
+  for (const auto& q : t) { tx = std::max(tx, std::fabs(q.x)); ty = std::max(ty, std::fabs(q.y)); }
+  CHECK(std::fabs(ty - 1.f) < 1e-4f && std::fabs(tx - 0.5625f) < 1e-3f);
+  CHECK(!g.empty() && g.front().blank);
+  // border + 3 vertical + 3 horizontal interior lines + the crosshair among them
+  int blanks = 0; for (const auto& q : g) blanks += q.blank;
+  CHECK(blanks == 1 + 6);
+}
+
 static void testModes() {
   Frame f = blank(100, 100);
   fillRect(f, 20, 20, 80, 80);
@@ -538,6 +556,7 @@ static void testBeyondSink() {
 }
 
 int main() {
+  testGridFitsFrame();
   testBeyondSink();
   testWireAndBridge();
   testIlda();

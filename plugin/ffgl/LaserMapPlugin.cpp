@@ -898,29 +898,44 @@ void LaserMapPlugin::drawOverlay()
 	if( previewPoints.size() < 2 || analysisW == 0 )
 		return;
 
+	// Each lit segment becomes a quad about 3 pixels wide: 1 px GL lines vanish when the monitor downscales a 1080p frame.
+	// Positions are converted to clip space here (laser space spans the longer side), so the shader just passes them on.
+	const float m = (float)std::max( analysisW, analysisH );
+	const float sx = m / analysisW, sy = m / analysisH;
+	const float halfPx = 1.5f;
+	const float W = (float)std::max( 1u, outW ), H = (float)std::max( 1u, outH );
 	std::vector< float > verts;
-	verts.reserve( previewPoints.size() * 10 );
-	auto push = [ & ]( const lasermap::Point& p ) {
-		verts.insert( verts.end(), { p.x, p.y, p.r, p.g, p.b } );
-	};
+	verts.reserve( previewPoints.size() * 30 );
+	auto emit = [ & ]( float x, float y, const lasermap::Point& c ) { verts.insert( verts.end(), { x, y, c.r, c.g, c.b } ); };
 	for( size_t i = 1; i < previewPoints.size(); ++i )
 	{
 		if( previewPoints[ i ].blank )
 			continue;
-		push( previewPoints[ i - 1 ] );
-		push( previewPoints[ i ] );
+		const lasermap::Point& a = previewPoints[ i - 1 ];
+		const lasermap::Point& b = previewPoints[ i ];
+		const float ax = a.x * sx, ay = a.y * sy, bx = b.x * sx, by = b.y * sy;
+		float dxp = ( bx - ax ) * W * 0.5f, dyp = ( by - ay ) * H * 0.5f;  // direction in pixels
+		float len = std::sqrt( dxp * dxp + dyp * dyp );
+		if( len < 1e-3f )
+		{
+			dxp = 1.f; dyp = 0.f; len = 1.f;  // a dot: draw a small square
+		}
+		const float nxp = -dyp / len * halfPx, nyp = dxp / len * halfPx;
+		const float ox = nxp * 2.f / W, oy = nyp * 2.f / H;                                  // normal offset in clip space
+		const float ex = dxp / len * halfPx * 2.f / W, ey = dyp / len * halfPx * 2.f / H;    // extend the ends a little
+		const float x0 = ax - ex, y0 = ay - ey, x1 = bx + ex, y1 = by + ey;
+		emit( x0 + ox, y0 + oy, a ); emit( x0 - ox, y0 - oy, a ); emit( x1 + ox, y1 + oy, b );
+		emit( x1 + ox, y1 + oy, b ); emit( x0 - ox, y0 - oy, a ); emit( x1 - ox, y1 - oy, b );
 	}
 	if( verts.empty() )
 		return;
 
-	// Points are normalised so the longer image side spans [-1,1]; map back to the output's aspect.
-	const float m = (float)std::max( analysisW, analysisH );
 	ScopedShaderBinding shaderBinding( lineShader.GetGLID() );
-	lineShader.Set( "Aspect", m / analysisW, m / analysisH );
+	lineShader.Set( "Aspect", 1.f, 1.f );
 	glBindVertexArray( lineVao );
 	glBindBuffer( GL_ARRAY_BUFFER, lineVbo );
 	glBufferData( GL_ARRAY_BUFFER, verts.size() * sizeof( float ), verts.data(), GL_STREAM_DRAW );
-	glDrawArrays( GL_LINES, 0, (GLsizei)( verts.size() / 5 ) );
+	glDrawArrays( GL_TRIANGLES, 0, (GLsizei)( verts.size() / 5 ) );
 	glBindBuffer( GL_ARRAY_BUFFER, 0 );
 	glBindVertexArray( 0 );
 }
@@ -964,6 +979,8 @@ FFResult LaserMapPlugin::ProcessOpenGL( ProcessOpenGLStruct* pGL )
 	drawTexture( src, srcUV, &videoState );
 
 	// 3. Optional on-screen preview of the laser path (always shown in Grid mode for calibration).
+	outW = tex.Width;
+	outH = tex.Height;
 	checkGL( "video draw" );
 	if( on( PT_PREVIEW ) || on( PT_M_GRID ) )
 		drawOverlay();

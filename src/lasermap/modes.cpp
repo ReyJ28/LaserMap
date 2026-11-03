@@ -254,12 +254,26 @@ ModeOutput renderSpotlight(const ModeParams& p) {
   return o;
 }
 
-ModeOutput renderGrid(const ModeParams&) {
+ModeOutput renderGrid(const ModeParams& p) {
+  // Laser space spans the longer image side over [-1,1], so the frame is ex x ey. The grid fills the frame exactly:
+  // a border, a 4x4 grid inside it and a centre crosshair (the zero lines), like a calibration chart.
   ModeOutput o;
-  for (int i = 0; i <= 4; ++i) {
-    float v = -1.f + 0.5f * i;
-    addLine(o.points, v, -1.f, v, 1.f, 8);
-    addLine(o.points, -1.f, v, 1.f, v, 8);
+  const float M = float(std::max({p.maskW, p.maskH, 1}));
+  const float ex = float(std::max(p.maskW, 1)) / M, ey = float(std::max(p.maskH, 1)) / M;
+  // border, one closed polyline (first point blanked)
+  const float cx[5] = {-ex, ex, ex, -ex, -ex}, cy[5] = {-ey, -ey, ey, ey, -ey};
+  o.points.push_back(white(cx[0], cy[0], true));
+  for (int k = 1; k < 5; ++k) {
+    const int n = 24;
+    for (int i = 1; i <= n; ++i) {
+      float t = float(i) / n;
+      o.points.push_back(white(cx[k - 1] + (cx[k] - cx[k - 1]) * t, cy[k - 1] + (cy[k] - cy[k - 1]) * t, false));
+    }
+  }
+  for (int i = 1; i < 4; ++i) {  // interior lines: 1/4, 1/2, 3/4 of the way across
+    const float f = -1.f + 0.5f * i;
+    addLine(o.points, ex * f, -ey, ex * f, ey, 16);
+    addLine(o.points, -ex, ey * f, ex, ey * f, 24);
   }
   return o;
 }
