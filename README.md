@@ -24,7 +24,9 @@ from, and was not derived from the binaries of, any other product.
 | BEYOND sink inside the bridge (`--beyond`): frames -> an "SDK Image" in the chosen projection zone via Pangolin's SDK DLL (`ldbCreateZoneImage`, `ldbSendFrameToImage`) | written from the SDK document and unit-tested against a mock of the SDK; **never run against a real BEYOND or the real DLL**. Never calls enable-output or blackout. Watchdog blanks a zone if frames stop for 1 s |
 | Sweep Style "Trace", Resolume Link | **not started** |
 
-Nothing here has been tested with BEYOND or a real laser.
+**Verified by the author (Windows, Resolume 7.28, BEYOND 5.5, one PC):** the plugin runs in Resolume, the bridge connects, and frames
+reach BEYOND (the helper's test pattern and Resolume's Grid show in the zone preview). **Not yet verified:** output on a real laser,
+the beat-sync, video delay, mask/reveal/cannon video masking, and the Record-to-ILDA import into BEYOND.
 
 ## Quick start (Windows, Resolume and BEYOND on one PC)
 
