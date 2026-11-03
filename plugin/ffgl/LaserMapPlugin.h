@@ -103,7 +103,9 @@
 	X( CL_INTENSITY, "Intensity", "Colour", S, 1, "" )                                         \
 	X( CL_CLIP, "Clip Colour", "Colour", B, 1, "" )                                            \
 	X( CL_FIXED, "Fixed Colour", "Colour", H, 0.55, "" )                                       \
-	X( CL_WHITE, "Fixed White", "Colour", B, 0, "" )
+	X( CL_WHITE, "Fixed White", "Colour", B, 0, "" )                                           \
+	X( GRID_STYLE, "Grid Style", "Grid", O, 0, "Square cells|4 x 4" )                          \
+	X( GRID_CELLS, "Grid Cells", "Grid", S, 0.625, "" )
 
 enum ParamIndex : unsigned int
 {

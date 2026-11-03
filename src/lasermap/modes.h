@@ -33,6 +33,8 @@ struct ModeParams {
   float spacing = 0;    // minimum point spacing in laser units; 0 = automatic
   float syncPhase = -1; // >= 0: host-beat phase 0..1 replaces time for this mode
   int maskW = 256, maskH = 144;  // size of the analysis frame (for raster masks)
+  int gridStyle = 0;             // Grid mode: 0 = square cells that fit the frame, 1 = 4 x 4 cells
+  int gridCells = 9;             // preferred number of cells along the shorter side (squares style)
 
   // Beam Runners
   int beamCount = 3;

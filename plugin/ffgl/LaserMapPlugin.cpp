@@ -673,7 +673,12 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 		take( std::move( o ), nullptr );
 	}
 	if( mGrid )
-		take( lasermap::renderGrid( mp ), nullptr );
+		{
+		lasermap::ModeParams gp = mp;
+		gp.gridStyle = opt( PT_GRID_STYLE );
+		gp.gridCells = 4 + (int)std::lround( f( PT_GRID_CELLS ) * 8.f );  // cells on the short side, 4..12 (default 9)
+		take( lasermap::renderGrid( gp ), nullptr );
+	}
 
 	// ---- Colour ----
 	{

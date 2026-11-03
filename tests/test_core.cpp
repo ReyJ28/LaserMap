@@ -6,6 +6,7 @@
 #include <fstream>
 
 #include "lasermap/ilda.h"
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <chrono>
@@ -174,21 +175,64 @@ static void testExtract() {
 }
 
 static void testGridFitsFrame() {
-  ModeParams wide; wide.maskW = 160; wide.maskH = 90;  // 16:9
+  auto extent = [](const PointFrame& g, float& ax, float& ay) {
+    ax = ay = 0;
+    for (const auto& q : g) { ax = std::max(ax, std::fabs(q.x)); ay = std::max(ay, std::fabs(q.y)); }
+  };
+  auto blanks = [](const PointFrame& g) { int n = 0; for (const auto& q : g) n += q.blank; return n; };
+  // Distinct x positions of the vertical lines (a vertical line starts at y = -ey or +ey) and y of horizontal ones.
+  auto linePositions = [](const PointFrame& g, bool vertical) {
+    std::vector<float> v;
+    for (size_t i = 1; i + 1 < g.size(); ++i) {
+      const auto& a = g[i - 1]; const auto& b = g[i];
+      if (b.blank) continue;
+      const float dx = std::fabs(b.x - a.x), dy = std::fabs(b.y - a.y);
+      if (a.blank && ((vertical && dy > dx * 5 && dy > 0.05f) || (!vertical && dx > dy * 5 && dx > 0.05f))) v.push_back(vertical ? a.x : a.y);
+    }
+    std::sort(v.begin(), v.end());
+    return v;
+  };
+
+  // 16:9, default: exactly 16 x 9 square cells that fill the frame.
+  ModeParams wide; wide.maskW = 160; wide.maskH = 90;
   auto g = renderGrid(wide).points;
-  float minx = 9, maxx = -9, miny = 9, maxy = -9;
-  for (const auto& q : g) { minx = std::min(minx, q.x); maxx = std::max(maxx, q.x); miny = std::min(miny, q.y); maxy = std::max(maxy, q.y); }
-  CHECK(std::fabs(minx + 1.f) < 1e-4f && std::fabs(maxx - 1.f) < 1e-4f);        // fills the width
-  CHECK(std::fabs(maxy - 0.5625f) < 1e-3f && std::fabs(miny + 0.5625f) < 1e-3f);  // and exactly the height: no lines off-frame
-  ModeParams tall; tall.maskW = 90; tall.maskH = 160;  // portrait fits too
+  float ax, ay; extent(g, ax, ay);
+  CHECK(std::fabs(ax - 1.f) < 1e-4f && std::fabs(ay - 0.5625f) < 1e-3f);  // fills the frame, nothing off-frame
+  auto vx = linePositions(g, true), hy = linePositions(g, false);
+  // 17 vertical + 10 horizontal lines (the crosshair strokes have smaller steps and are not counted)
+  CHECK(vx.size() == 17 && hy.size() == 10);
+  if (vx.size() == 17 && hy.size() == 10) {
+    const float cellW = vx[1] - vx[0], cellH = hy[1] - hy[0];
+    CHECK(std::fabs(cellW - 0.125f) < 1e-4f && std::fabs(cellH - 0.125f) < 1e-4f);  // perfect squares
+    CHECK(std::fabs(vx.front() + 1.f) < 1e-4f && std::fabs(vx.back() - 1.f) < 1e-4f);
+    CHECK(std::fabs(hy.front() + 0.5625f) < 1e-3f && std::fabs(hy.back() - 0.5625f) < 1e-3f);
+  }
+  CHECK(g.front().blank);
+
+  // Portrait 9:16 also fits, with 9 x 16 squares.
+  ModeParams tall; tall.maskW = 90; tall.maskH = 160;
   auto t = renderGrid(tall).points;
-  float tx = 0, ty = 0;
-  for (const auto& q : t) { tx = std::max(tx, std::fabs(q.x)); ty = std::max(ty, std::fabs(q.y)); }
-  CHECK(std::fabs(ty - 1.f) < 1e-4f && std::fabs(tx - 0.5625f) < 1e-3f);
-  CHECK(!g.empty() && g.front().blank);
-  // border + 3 vertical + 3 horizontal interior lines + the crosshair among them
-  int blanks = 0; for (const auto& q : g) blanks += q.blank;
-  CHECK(blanks == 1 + 6);
+  extent(t, ax, ay);
+  CHECK(std::fabs(ay - 1.f) < 1e-4f && std::fabs(ax - 0.5625f) < 1e-3f);
+  CHECK(linePositions(t, true).size() == 10 && linePositions(t, false).size() == 17);
+
+  // 4:3 chooses a whole number of square cells too (12 x 9), and a square frame gives a square count.
+  ModeParams four3; four3.maskW = 160; four3.maskH = 120;
+  auto f3 = renderGrid(four3).points;
+  CHECK(linePositions(f3, true).size() == 13 && linePositions(f3, false).size() == 10);
+  ModeParams sq; sq.maskW = 100; sq.maskH = 100;
+  CHECK(linePositions(renderGrid(sq).points, true).size() == linePositions(renderGrid(sq).points, false).size());
+
+  // User-chosen density on 16:9: 18 cells on the short side -> 32 x 18; still squares.
+  ModeParams dense = wide; dense.gridCells = 18;
+  CHECK(linePositions(renderGrid(dense).points, true).size() == 33);
+
+  // The 4 x 4 style: border + 3 interior lines each way.
+  ModeParams four = wide; four.gridStyle = 1;
+  auto q4 = renderGrid(four).points;
+  extent(q4, ax, ay);
+  CHECK(std::fabs(ax - 1.f) < 1e-4f && std::fabs(ay - 0.5625f) < 1e-3f);
+  CHECK(blanks(q4) == 7);
 }
 
 static void testModes() {

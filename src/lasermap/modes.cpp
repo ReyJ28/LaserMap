@@ -255,26 +255,54 @@ ModeOutput renderSpotlight(const ModeParams& p) {
 }
 
 ModeOutput renderGrid(const ModeParams& p) {
-  // Laser space spans the longer image side over [-1,1], so the frame is ex x ey. The grid fills the frame exactly:
-  // a border, a 4x4 grid inside it and a centre crosshair (the zero lines), like a calibration chart.
+  // Laser space spans the longer image side over [-1,1], so the frame is ex x ey.
   ModeOutput o;
   const float M = float(std::max({p.maskW, p.maskH, 1}));
   const float ex = float(std::max(p.maskW, 1)) / M, ey = float(std::max(p.maskH, 1)) / M;
-  // border, one closed polyline (first point blanked)
-  const float cx[5] = {-ex, ex, ex, -ex, -ex}, cy[5] = {-ey, -ey, ey, ey, -ey};
-  o.points.push_back(white(cx[0], cy[0], true));
-  for (int k = 1; k < 5; ++k) {
-    const int n = 24;
-    for (int i = 1; i <= n; ++i) {
-      float t = float(i) / n;
-      o.points.push_back(white(cx[k - 1] + (cx[k] - cx[k - 1]) * t, cy[k - 1] + (cy[k] - cy[k - 1]) * t, false));
+  if (p.gridStyle == 1) {  // 4 x 4 cells: a border and three lines each way (cells are rectangles unless the frame is square)
+    const float cx[5] = {-ex, ex, ex, -ex, -ex}, cy[5] = {-ey, -ey, ey, ey, -ey};
+    o.points.push_back(white(cx[0], cy[0], true));
+    for (int k = 1; k < 5; ++k)
+      for (int i = 1; i <= 24; ++i) {
+        float t = float(i) / 24;
+        o.points.push_back(white(cx[k - 1] + (cx[k] - cx[k - 1]) * t, cy[k - 1] + (cy[k] - cy[k - 1]) * t, false));
+      }
+    for (int i = 1; i < 4; ++i) {
+      const float f = -1.f + 0.5f * i;
+      addLine(o.points, ex * f, -ey, ex * f, ey, 16);
+      addLine(o.points, -ex, ey * f, ex, ey * f, 24);
+    }
+    return o;
+  }
+  // Square cells that fill the frame edge to edge. Pick the number of cells on the shorter side (near the preferred
+  // count) so that the longer side holds a whole number of the same cells; 16:9 with 9 cells gives exactly 16 x 9.
+  const bool landscape = p.maskW >= p.maskH;
+  const float ratio = landscape ? ex / ey : ey / ex;  // long side / short side, >= 1
+  const int pref = std::clamp(p.gridCells, 2, 24);
+  int bestK = pref, bestM = std::max(1, int(std::lround(pref * ratio)));
+  float bestErr = std::fabs(float(bestM) / bestK - ratio);
+  for (int k = std::max(2, pref - 2); k <= pref + 2; ++k) {
+    const int m = std::max(1, int(std::lround(k * ratio)));
+    const float err = std::fabs(float(m) / k - ratio);
+    if (err < bestErr - 1e-4f || (std::fabs(err - bestErr) <= 1e-4f && std::abs(k - pref) < std::abs(bestK - pref))) {
+      bestK = k; bestM = m; bestErr = err;
     }
   }
-  for (int i = 1; i < 4; ++i) {  // interior lines: 1/4, 1/2, 3/4 of the way across
-    const float f = -1.f + 0.5f * i;
-    addLine(o.points, ex * f, -ey, ex * f, ey, 16);
-    addLine(o.points, -ex, ey * f, ex, ey * f, 24);
+  const int cols = landscape ? bestM : bestK, rows = landscape ? bestK : bestM;
+  // Lines alternate direction so the beam does not jump back to the start of every line.
+  for (int i = 0; i <= cols; ++i) {
+    const float x = -ex + 2.f * ex * float(i) / cols;
+    if (i % 2 == 0) addLine(o.points, x, -ey, x, ey, 16);
+    else addLine(o.points, x, ey, x, -ey, 16);
   }
+  for (int j = 0; j <= rows; ++j) {
+    const float y = -ey + 2.f * ey * float(j) / rows;
+    if (j % 2 == 0) addLine(o.points, -ex, y, ex, y, 24);
+    else addLine(o.points, ex, y, -ex, y, 24);
+  }
+  const float t = 0.06f;  // a small crosshair marks the exact centre even when the grid has no centre line
+  addLine(o.points, -t, 0.f, t, 0.f, 4);
+  addLine(o.points, 0.f, -t, 0.f, t, 4);
   return o;
 }
 
