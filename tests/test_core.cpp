@@ -187,7 +187,7 @@ static void testGridFitsFrame() {
       const auto& a = g[i - 1]; const auto& b = g[i];
       if (b.blank) continue;
       const float dx = std::fabs(b.x - a.x), dy = std::fabs(b.y - a.y);
-      if (a.blank && ((vertical && dy > dx * 5 && dy > 0.05f) || (!vertical && dx > dy * 5 && dx > 0.05f))) v.push_back(vertical ? a.x : a.y);
+      if (a.blank && ((vertical && dy > dx * 5 && dy > 0.04f) || (!vertical && dx > dy * 5 && dx > 0.04f))) v.push_back(vertical ? a.x : a.y);
     }
     std::sort(v.begin(), v.end());
     return v;
