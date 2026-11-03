@@ -19,21 +19,33 @@ New-Item -ItemType Directory -Force $app | Out-Null
 Copy-Item (Join-Path $here 'lasermap_bridge.exe') $app -Force
 Write-Host "Helper installed:  $app\lasermap_bridge.exe" -ForegroundColor Green
 
-# 3) Is Pangolin's SDK file where the helper can find it?
-$roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramW6432, $env:ProgramData) | Where-Object { $_ } | Select-Object -Unique
+# 3) Is Pangolin's SDK file where the helper can find it? Try the running BEYOND first, then common places.
 $dll = $null
-foreach ($r in $roots) {
-  $dirs = Get-ChildItem $r -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'Pangolin|BEYOND' }
-  foreach ($d in $dirs) {
-    $dll = Get-ChildItem $d.FullName -Recurse -Filter 'BEYONDIO.dll' -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
+$proc = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'BEYOND*' } | Select-Object -First 1
+if ($proc -and $proc.Path) {
+  $cand = Join-Path (Split-Path -Parent $proc.Path) 'BEYONDIO.dll'
+  if (Test-Path $cand) { $dll = Get-Item $cand }
+}
+if (-not $dll) {
+  $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramW6432, $env:ProgramData) | Where-Object { $_ }
+  $roots += (Get-PSDrive -PSProvider FileSystem | ForEach-Object { $_.Root })
+  foreach ($r in ($roots | Select-Object -Unique)) {
+    $dirs = Get-ChildItem $r -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'Pangolin|BEYOND' }
+    foreach ($d in $dirs) {
+      $dll = Get-ChildItem $d.FullName -Recurse -Filter 'BEYONDIO.dll' -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($dll) { break }
+    }
     if ($dll) { break }
   }
-  if ($dll) { break }
 }
-if ($dll) { Write-Host "Found BEYONDIO.dll: $($dll.FullName)" -ForegroundColor Green }
+if ($dll) {
+  Write-Host "Found BEYONDIO.dll: $($dll.FullName)" -ForegroundColor Green
+  Copy-Item $dll.FullName $app -Force
+  Write-Host "Copied it next to the helper: $app" -ForegroundColor Green
+}
 else {
-  Write-Host 'BEYONDIO.dll was not found in your BEYOND install.' -ForegroundColor Yellow
-  Write-Host "Copy Pangolin's BEYONDIO.dll into $app (it is not included here)."
+  Write-Host 'BEYONDIO.dll was not found. Start BEYOND and run this installer again (it reads the path of the running BEYOND),' -ForegroundColor Yellow
+  Write-Host "or copy Pangolin's BEYONDIO.dll into $app (it is not included here)."
 }
 
 Write-Host ''

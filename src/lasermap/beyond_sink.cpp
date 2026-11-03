@@ -165,11 +165,17 @@ static std::vector<std::string> candidateSdkPaths() {
   if (GetModuleFileNameA(nullptr, exe, MAX_PATH)) tryDir(fs::path(exe).parent_path());
   tryDir(fs::current_path());
   auto lower = [](std::string s) { for (auto& c : s) c = char(std::tolower(static_cast<unsigned char>(c))); return s; };
-  for (const char* var : {"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData", "PUBLIC"}) {
+  // Folders to look inside: Program Files and friends, plus the top of every drive (BEYOND is often installed to C:\\BEYOND
+  // or another disk). Only folders whose name contains "pangolin" or "beyond" are searched, a few levels deep.
+  std::vector<std::string> roots;
+  for (const char* var : {"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData", "PUBLIC", "LOCALAPPDATA"}) {
     const char* v = std::getenv(var);
-    if (!v) continue;
+    if (v) roots.push_back(v);
+  }
+  for (char drive = 'C'; drive <= 'Z'; ++drive) roots.push_back(std::string(1, drive) + ":\\");
+  for (const std::string& root : roots) {
     std::error_code ec;
-    for (fs::directory_iterator it(v, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+    for (fs::directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
       const std::string name = lower(it->path().filename().string());
       if (name.find("pangolin") == std::string::npos && name.find("beyond") == std::string::npos) continue;
       tryDir(it->path());
