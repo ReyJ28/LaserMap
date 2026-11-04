@@ -25,6 +25,8 @@ int main(int argc, char** argv) {
   put(out, magic); put(out, mw); put(out, mh); put(out, total);
   TraceParams tp;
   tp.threshold = 0.35f; tp.simplifyEps = 1.2f; tp.minPerimeter = 10.f; tp.maxShapes = 24; tp.smoothing = 0.25f; tp.maxPoints = 2214;
+  if (std::getenv("LASERMAP_RAW")) { tp.contourSmooth = 0.f; tp.optimiseOrder = false; }  // for before/after comparisons
+  double sumPts = 0, sumBlank = 0;
   std::vector<uint8_t> raw(size_t(w) * h * 3);
   Frame f; f.w = w; f.h = h; f.rgba.resize(size_t(w) * h * 4);
   std::vector<PointFrame> ildFrames;
@@ -32,7 +34,10 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < size_t(w) * h; ++i) {
       f.rgba[i * 4] = raw[i * 3]; f.rgba[i * 4 + 1] = raw[i * 3 + 1]; f.rgba[i * 4 + 2] = raw[i * 3 + 2]; f.rgba[i * 4 + 3] = 255;
     }
-    const PointFrame pts = emitOutline(extractShapes(f, tp), 0.0422f);
+    const auto shapes = extractShapes(f, tp);
+    const PointFrame pts = emitOutline(shapes, 0.0422f);
+    sumPts += double(pts.size());
+    sumBlank += double(blankTravel(shapes));
     const int32_t zero = 0, np = int32_t(pts.size());
     const float zf = 0.f;
     put(out, zero); put(out, zero); put(out, zf); put(out, zf); put(out, zf); put(out, zero); put(out, zf); put(out, zero);
@@ -45,7 +50,7 @@ int main(int argc, char** argv) {
   }
   out.seekp(12);
   put(out, total);
-  std::fprintf(stderr, "traced %d frames\n", int(total));
+  std::fprintf(stderr, "traced %d frames, avg %.0f points/frame, avg blanked travel %.2f units/frame\n", int(total), total ? sumPts / total : 0.0, total ? sumBlank / total : 0.0);
   if (argc > 4) std::fprintf(stderr, writeIldaFile(argv[4], ildFrames) ? "wrote %s\n" : "could not write %s\n", argv[4]);
   return 0;
 }

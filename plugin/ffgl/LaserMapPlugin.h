@@ -14,6 +14,7 @@
 #include "lasermap/net.h"
 #include "lasermap/output.h"
 #include "lasermap/safety.h"
+#include "lasermap/schedule.h"
 #include "lasermap/trace.h"
 
 // X(id, display name (max 16 chars), group, type, default, options)
@@ -55,6 +56,8 @@
 	X( SC_CANGLE, "Corner Angle", "Scanner", S, 0.24, "" )                                     \
 	X( SC_BDWELL, "Blank Dwell", "Scanner", S, 0.25, "" )                                      \
 	X( SC_MAXPTS, "Max Points", "Scanner", S, 0.53, "" )                                       \
+	X( SC_SMOOTH, "Smooth Curves", "Scanner", S, 0.5, "" )                                     \
+	X( SC_ORDER, "Optimise Order", "Scanner", B, 1, "" )                                       \
 	X( BR_COUNT, "Beam Count", "Beam Runners", S, 0.23, "" )                                   \
 	X( BR_DIR, "Beam Direction", "Beam Runners", O, 0, "Forward|Reverse|Alternate" )           \
 	X( BR_SPEED, "Beam Speed", "Beam Runners", S, 0.2, "" )                                    \
@@ -105,7 +108,11 @@
 	X( CL_FIXED, "Fixed Colour", "Colour", H, 0.55, "" )                                       \
 	X( CL_WHITE, "Fixed White", "Colour", B, 0, "" )                                           \
 	X( GRID_STYLE, "Grid Style", "Grid", O, 0, "Square cells|4 x 4" )                          \
-	X( GRID_CELLS, "Grid Cells", "Grid", S, 0.625, "" )
+	X( GRID_CELLS, "Grid Cells", "Grid", S, 0.625, "" )                                        \
+	X( SCHED_ON, "Use Schedule", "Schedule", B, 0, "" )                                        \
+	X( SCHED_LOOP, "Loop Schedule", "Schedule", B, 1, "" )                                     \
+	X( SCHED_RESTART, "Restart Schedule", "Schedule", E, 0, "" )                               \
+	X( SCHED_TEXT, "Mode Schedule", "Schedule", T, 0, "0-8: Trace Clip; 8-16: Beam Runners; 16-24: Sweep + Grid" )
 
 enum ParamIndex : unsigned int
 {
@@ -187,6 +194,11 @@ private:
 
 	std::unique_ptr< lasermap::TcpClientOutput > bridge;
 	std::string bridgeAddr = "127.0.0.1:7788";
+	std::string schedText = "0-8: Trace Clip; 8-16: Beam Runners; 16-24: Sweep + Grid";
+	lasermap::Schedule schedule;
+	double schedClock = 0.0;
+	bool schedWasOn = false;
+	bool schedRestart = false;
 	std::string textBuf;
 	uint64_t lastBridgeSent = 0;
 	int lastBridgeState = -1;

@@ -17,6 +17,9 @@ struct TraceParams {
   float keyTolerance = 0.25f; // 0..1, fraction of half the hue circle
   bool keyWhite = false;      // also keep near-white pixels
   int maxPoints = 4000;       // hard budget for one output frame
+  float contourSmooth = 0.5f; // 0..1: removes pixel wobble from curves; real corners stay sharp
+  float cornerAngleDeg = 50.f; // a turn sharper than this counts as a corner and is never smoothed
+  bool optimiseOrder = true;  // draw shapes in a short path order, each loop starting at its nearest point
 };
 
 // The scalar field that is thresholded (source selection, smoothing and colour keying applied).
@@ -41,6 +44,12 @@ std::vector<Vec2> simplifyClosed(const std::vector<Vec2>& poly, float eps);
 struct Shape {
   std::vector<Point> pts;
 };
+
+// Total length of the blanked jumps needed to draw the shapes in this order (each loop closes on its start point).
+float blankTravel(const std::vector<Shape>& shapes, Vec2 start = {-1.f, 1.f});
+// Greedy nearest-neighbour order: repeatedly pick the shape with a vertex closest to the pen and rotate that loop so
+// it starts there. Shortens blanked travel (less flicker, more light on the lines) and keeps the order stable.
+void orderShapes(std::vector<Shape>& shapes, Vec2 start = {-1.f, 1.f});
 
 // Find, simplify and colour the outlines of the frame (budgeted by p.maxPoints).
 std::vector<Shape> extractShapes(const Frame& f, const TraceParams& p = {});

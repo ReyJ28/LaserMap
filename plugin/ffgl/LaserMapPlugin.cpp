@@ -248,6 +248,7 @@ LaserMapPlugin::LaserMapPlugin() :
 		SetParamGroup( i, d.group );
 	}
 
+	schedule = lasermap::parseSchedule( schedText );
 	writeLog( "effect created, build " __DATE__ " " __TIME__ " (diagnostics v3, log file)" );
 }
 
@@ -522,10 +523,28 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 	tp.simplifyEps = 0.3f + f( PT_ED_SIMPLIFY ) * 3.0f;
 	const int maxPts = 200 + (int)std::lround( f( PT_SC_MAXPTS ) * 3800.f );
 	tp.maxPoints = maxPts;
+	tp.contourSmooth = f( PT_SC_SMOOTH );
+	tp.optimiseOrder = on( PT_SC_ORDER );
 
 	// ---- Which modes are on ----
-	const bool mClip = on( PT_M_CLIP ), mBeams = on( PT_M_BEAMS ), mSweep = on( PT_M_SWEEP ), mBars = on( PT_M_BARS ),
-	           mSpot = on( PT_M_SPOT ), mCannon = on( PT_M_CANNON ), mReveal = on( PT_M_REVEAL ), mGrid = on( PT_M_GRID );
+	uint32_t modeBits = ( on( PT_M_CLIP ) ? lasermap::kModeClip : 0 ) | ( on( PT_M_BEAMS ) ? lasermap::kModeBeams : 0 ) |
+	                    ( on( PT_M_SWEEP ) ? lasermap::kModeSweep : 0 ) | ( on( PT_M_BARS ) ? lasermap::kModeBars : 0 ) |
+	                    ( on( PT_M_SPOT ) ? lasermap::kModeSpot : 0 ) | ( on( PT_M_CANNON ) ? lasermap::kModeCannon : 0 ) |
+	                    ( on( PT_M_REVEAL ) ? lasermap::kModeReveal : 0 ) | ( on( PT_M_GRID ) ? lasermap::kModeGrid : 0 );
+	const bool schedOn = on( PT_SCHED_ON );
+	if( schedOn )
+	{
+		if( !schedWasOn || schedRestart )
+			schedClock = 0.0;
+		schedRestart = false;
+		schedClock += std::min( dt, 0.1 );
+		modeBits = schedule.activeAt( schedClock, on( PT_SCHED_LOOP ) );
+	}
+	schedWasOn = schedOn;
+	const bool mClip = modeBits & lasermap::kModeClip, mBeams = modeBits & lasermap::kModeBeams,
+	           mSweep = modeBits & lasermap::kModeSweep, mBars = modeBits & lasermap::kModeBars,
+	           mSpot = modeBits & lasermap::kModeSpot, mCannon = modeBits & lasermap::kModeCannon,
+	           mReveal = modeBits & lasermap::kModeReveal, mGrid = modeBits & lasermap::kModeGrid;
 	const bool needShapes = mClip || mBeams || mSweep || mBars || mCannon || mReveal;
 	int active = ( mClip ? 1 : 0 ) + ( mBeams ? 1 : 0 ) + ( mSweep ? 1 : 0 ) + ( mBars ? 1 : 0 ) + ( mSpot ? 1 : 0 ) +
 	             ( mCannon ? 1 : 0 ) + ( mReveal ? 1 : 0 ) + ( mGrid ? 1 : 0 );
@@ -830,6 +849,13 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 		char buf[ 48 ];
 		std::snprintf( buf, sizeof buf, "Armed  %d pts/%d sh", lastPoints, lastShapes );
 		SetParamDisplayName( PT_ARMED, buf, true );
+		if( schedOn )
+		{
+			std::snprintf( buf, sizeof buf, "%.0fs: %s", schedClock, lasermap::modeNames( modeBits ).c_str() );
+			SetParamDisplayName( PT_SCHED_ON, buf, true );
+		}
+		else
+			SetParamDisplayName( PT_SCHED_ON, "Use Schedule", true );
 		if( wasRecording )
 		{
 			std::snprintf( buf, sizeof buf, "Recording %d fr", (int)recorded.size() );
@@ -1020,6 +1046,8 @@ FFResult LaserMapPlugin::SetFloatParameter( unsigned int index, float value )
 	case PType::E:
 		if( value > 0.5f && values[ index ] <= 0.5f && index == PT_FIRE_SWEEP )
 			fireRequested = true;
+		if( value > 0.5f && values[ index ] <= 0.5f && index == PT_SCHED_RESTART )
+			schedRestart = true;
 		values[ index ] = value > 0.5f ? 1.f : 0.f;
 		break;
 	default:
@@ -1031,17 +1059,33 @@ FFResult LaserMapPlugin::SetFloatParameter( unsigned int index, float value )
 
 FFResult LaserMapPlugin::SetTextParameter( unsigned int index, const char* value )
 {
-	if( index != PT_BRIDGE_ADDR || !value )
+	if( !value )
 		return FF_FAIL;
-	bridgeAddr = value;
-	return FF_SUCCESS;
+	if( index == PT_BRIDGE_ADDR )
+	{
+		bridgeAddr = value;
+		return FF_SUCCESS;
+	}
+	if( index == PT_SCHED_TEXT )
+	{
+		schedText = value;
+		schedule = lasermap::parseSchedule( schedText );
+		writeLog( "schedule: " + std::to_string( schedule.segments.size() ) + " segment(s), " + std::to_string( schedule.length() ) + " s" );
+		for( const std::string& p : schedule.problems )
+			writeLog( "schedule problem: " + p );
+		return FF_SUCCESS;
+	}
+	return FF_FAIL;
 }
 
 char* LaserMapPlugin::GetTextParameter( unsigned int index )
 {
-	if( index != PT_BRIDGE_ADDR )
+	if( index == PT_BRIDGE_ADDR )
+		textBuf = bridgeAddr;
+	else if( index == PT_SCHED_TEXT )
+		textBuf = schedText;
+	else
 		return (char*)FF_FAIL;
-	textBuf = bridgeAddr;
 	return textBuf.data();
 }
 

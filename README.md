@@ -35,6 +35,14 @@ Download the **LaserMap-Windows** artifact (latest run in the Actions tab), unzi
 pick the **Zone**, tick **Armed**, turn on **Grid**. The plugin starts the helper by itself (**Auto Start Helper**), the
 helper finds `BEYONDIO.dll` in your BEYOND folder, and it closes itself 20 s after the plugin disconnects.
 
+## Refinement and mode schedule
+
+- **Smooth Curves / Optimise Order** (Scanner group): removes pixel wobble from outlines while keeping real corners, and draws shapes in a short path order (less blanked travel, less flicker). On the demo layer blanked travel dropped about 57%.
+- **Schedule** group: switch on **Use Schedule** and type a plan into **Mode Schedule**, e.g.
+  `0-8: Trace Clip; 8-16: Beam Runners + Sweep; 1:00-1:20: Grid`
+  Times are seconds or m:ss, segments are separated by `;` or new lines, modes by `+`. End times are exclusive; outside every segment the laser is blank (`none` blanks on purpose). Bad parts are skipped and listed in `Documents\\LaserMap\\lasermap.log`.
+  The schedule runs on its own clock that starts when you switch it on; **Restart Schedule** resets it to 0 (map it to the clip trigger or a button). **Loop Schedule** repeats after the last segment. The Use Schedule label shows the clock and current modes.
+
 ## Bridge (plugin -> laser PC)
 
 Same shape as other Resolume-to-BEYOND tools: a plugin in Resolume and a small helper on the computer that

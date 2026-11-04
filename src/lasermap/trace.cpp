@@ -238,6 +238,76 @@ std::vector<Vec2> simplifyClosed(const std::vector<Vec2>& poly, float eps) {
   return out;
 }
 
+namespace {
+// Corner-preserving smoothing of a dense closed contour: points on gentle curves are averaged with their neighbours,
+// points where the path turns sharply (and their neighbours) are left alone.
+void smoothClosedDense(std::vector<Vec2>& c, int passes, float cornerDeg) {
+  const size_t n = c.size();
+  if (n < 12 || passes <= 0) return;
+  const size_t k = 3;
+  const float cosLimit = std::cos(cornerDeg * 3.14159265f / 180.f);
+  std::vector<char> corner(n, 0);
+  for (size_t i = 0; i < n; ++i) {
+    const Vec2 a = c[(i + n - k) % n], b = c[i], d = c[(i + k) % n];
+    const float v1x = b.x - a.x, v1y = b.y - a.y, v2x = d.x - b.x, v2y = d.y - b.y;
+    const float l1 = std::hypot(v1x, v1y), l2 = std::hypot(v2x, v2y);
+    if (l1 < 1e-6f || l2 < 1e-6f) continue;
+    if ((v1x * v2x + v1y * v2y) / (l1 * l2) < cosLimit) corner[i] = 1;
+  }
+  std::vector<char> keep(n, 0);  // corners and one neighbour either side stay put
+  for (size_t i = 0; i < n; ++i)
+    if (corner[i]) { keep[i] = 1; keep[(i + 1) % n] = 1; keep[(i + n - 1) % n] = 1; }
+  std::vector<Vec2> t(n);
+  for (int pass = 0; pass < passes; ++pass) {
+    for (size_t i = 0; i < n; ++i) {
+      if (keep[i]) { t[i] = c[i]; continue; }
+      const Vec2 a = c[(i + n - 1) % n], b = c[i], d = c[(i + 1) % n];
+      t[i] = {0.25f * a.x + 0.5f * b.x + 0.25f * d.x, 0.25f * a.y + 0.5f * b.y + 0.25f * d.y};
+    }
+    c.swap(t);
+    t.resize(n);
+  }
+}
+}  // namespace
+
+float blankTravel(const std::vector<Shape>& shapes, Vec2 start) {
+  float total = 0;
+  Vec2 pen = start;
+  for (const auto& s : shapes) {
+    if (s.pts.empty()) continue;
+    total += std::hypot(s.pts[0].x - pen.x, s.pts[0].y - pen.y);
+    pen = {s.pts[0].x, s.pts[0].y};  // a closed loop ends where it started
+  }
+  return total;
+}
+
+void orderShapes(std::vector<Shape>& shapes, Vec2 start) {
+  std::vector<Shape> out;
+  out.reserve(shapes.size());
+  std::vector<char> used(shapes.size(), 0);
+  Vec2 pen = start;
+  for (size_t step = 0; step < shapes.size(); ++step) {
+    int best = -1;
+    size_t bestJ = 0;
+    float bestD = 1e30f;
+    for (size_t i = 0; i < shapes.size(); ++i) {
+      if (used[i] || shapes[i].pts.empty()) continue;
+      for (size_t j = 0; j < shapes[i].pts.size(); ++j) {
+        const float dx = shapes[i].pts[j].x - pen.x, dy = shapes[i].pts[j].y - pen.y;
+        const float d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = int(i); bestJ = j; }
+      }
+    }
+    if (best < 0) break;
+    used[size_t(best)] = 1;
+    Shape sh = std::move(shapes[size_t(best)]);
+    std::rotate(sh.pts.begin(), sh.pts.begin() + std::ptrdiff_t(bestJ), sh.pts.end());
+    pen = {sh.pts[0].x, sh.pts[0].y};
+    out.push_back(std::move(sh));
+  }
+  shapes.swap(out);
+}
+
 std::vector<Shape> extractShapes(const Frame& f, const TraceParams& p) {
   std::vector<Shape> shapes;
   if (!f.valid()) return shapes;
@@ -249,6 +319,11 @@ std::vector<Shape> extractShapes(const Frame& f, const TraceParams& p) {
     std::sort(contours.begin(), contours.end(),
               [](const auto& a, const auto& b) { return perimeter(a) > perimeter(b); });
     contours.resize(size_t(std::max(p.maxShapes, 0)));
+  }
+
+  {
+    const int passes = int(std::lround(std::clamp(p.contourSmooth, 0.f, 1.f) * 6.f));
+    for (auto& c : contours) smoothClosedDense(c, passes, p.cornerAngleDeg);
   }
 
   auto build = [&](float eps) {
@@ -303,6 +378,7 @@ std::vector<Shape> extractShapes(const Frame& f, const TraceParams& p) {
     for (const auto& v : c) sh.pts.push_back(convert(v));
     shapes.push_back(std::move(sh));
   }
+  if (p.optimiseOrder) orderShapes(shapes);
   return shapes;
 }
 

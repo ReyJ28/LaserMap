@@ -16,6 +16,7 @@
 #include "lasermap/beyond_sink.h"
 #include "lasermap/modes.h"
 #include "lasermap/net.h"
+#include "lasermap/schedule.h"
 #include "lasermap/wire.h"
 #include "lasermap/safety.h"
 #include "lasermap/trace.h"
@@ -172,6 +173,87 @@ static void testExtract() {
   CHECK(!extractShapes(f, tp).empty());
   auto mk = maskImage(f, tp);
   CHECK(mk.size() == size_t(f.w) * f.h);
+}
+
+static void testSchedule() {
+  auto sch = parseSchedule("0-8: Trace Clip; 8-16: Beam Runners + Sweep; 16-24: grid, spot");
+  CHECK(sch.problems.empty() && sch.segments.size() == 3);
+  CHECK(std::fabs(sch.length() - 24.0) < 1e-9);
+  CHECK(sch.activeAt(0, false) == kModeClip && sch.activeAt(7.99, false) == kModeClip);
+  CHECK(sch.activeAt(8.0, false) == (kModeBeams | kModeSweep));  // start inclusive, end exclusive
+  CHECK(sch.activeAt(20, false) == (kModeGrid | kModeSpot));
+  CHECK(sch.activeAt(24.0, false) == 0 && sch.activeAt(99, false) == 0);  // past the end: laser off
+  CHECK(sch.activeAt(25, true) == kModeClip && sch.activeAt(32.5, true) == (kModeBeams | kModeSweep));  // looping
+  // minutes:seconds, new lines, short and long names, "none"
+  auto m = parseSchedule("0:00-0:10 clip\n0:10-1:05.5: Trace Bars & Laser Cannon\n1:05.5-2:00: none");
+  CHECK(m.problems.empty() && m.segments.size() == 3);
+  CHECK(std::fabs(m.segments[1].end - 65.5) < 1e-9 && m.segments[1].modes == (kModeBars | kModeCannon));
+  CHECK(m.activeAt(100, false) == 0 && m.segments[2].modes == 0);
+  // overlapping segments combine
+  CHECK(parseSchedule("0-10: clip; 5-15: grid").activeAt(7, false) == (kModeClip | kModeGrid));
+  // bad input is reported and skipped, good parts still work
+  auto bad = parseSchedule("0-8: Trace Clip; 8-4: Grid; 9-12: Lazer; banana; 12-16: Sweep");
+  CHECK(bad.segments.size() == 2 && bad.problems.size() == 3);
+  CHECK(bad.activeAt(13, false) == kModeSweep);
+  CHECK(parseSchedule("").segments.empty() && parseSchedule("   ;  ; ").problems.empty());
+  CHECK(modeNames(kModeClip | kModeGrid) == "Trace Clip + Grid" && modeNames(0) == "none");
+}
+
+static void testRefine() {
+  // ---- ordering: a deliberately bad order gets shorter, and loops start at the nearest vertex ----
+  Frame f = blank(200, 120);
+  const int xs[8] = {10, 150, 10, 150, 80, 80, 10, 150}, ys[8] = {5, 5, 50, 50, 5, 90, 90, 90};
+  for (int i = 0; i < 8; ++i) fillRect(f, xs[i], ys[i], xs[i] + 30, ys[i] + 22);
+  TraceParams off; off.optimiseOrder = false;
+  auto shapes = extractShapes(f, off);
+  CHECK(shapes.size() == 8);
+  std::vector<Shape> bad;  // far-apart neighbours: alternate left/right ends of the list
+  for (size_t i = 0; i < shapes.size() / 2; ++i) { bad.push_back(shapes[i]); bad.push_back(shapes[shapes.size() - 1 - i]); }
+  const float before = blankTravel(bad);
+  auto good = bad;
+  orderShapes(good);
+  const float after = blankTravel(good);
+  std::printf("  ordering: blanked travel %.2f -> %.2f laser units\n", before, after);
+  CHECK(after < before * 0.8f);
+  CHECK(good.size() == bad.size());
+  // the first loop starts at the vertex nearest the pen (top-left)
+  float d0 = 1e9f;
+  for (const auto& s : bad) for (const auto& q : s.pts) d0 = std::min(d0, std::hypot(q.x + 1.f, q.y - 1.f));
+  CHECK(std::fabs(std::hypot(good[0].pts[0].x + 1.f, good[0].pts[0].y - 1.f) - d0) < 1e-5f);
+  // ordering is default and deterministic
+  auto a = extractShapes(f), b = extractShapes(f);
+  CHECK(a.size() == b.size() && !a.empty() && a[0].pts[0].x == b[0].pts[0].x && a[0].pts[0].y == b[0].pts[0].y);
+  CHECK(blankTravel(a) <= blankTravel(shapes) + 1e-4f);
+
+  // ---- smoothing: a pixelated circle gets rounder, a square keeps its corners ----
+  Frame c = blank(120, 120);
+  for (int y = 0; y < 120; ++y) for (int x = 0; x < 120; ++x)
+    if (std::hypot(x - 59.5, y - 59.5) < 40.0) setPix(c, x, y, 255, 255, 255);
+  auto dev = [&](float smooth) {
+    TraceParams tp; tp.contourSmooth = smooth; tp.simplifyEps = 0.05f;  // keep the contour's own vertices
+    auto sh = extractShapes(c, tp);
+    CHECK(sh.size() == 1);
+    if (sh.empty()) return 0.f;
+    float mean = 0;
+    for (const auto& q : sh[0].pts) mean += std::hypot(q.x, q.y);
+    mean /= sh[0].pts.size();
+    float mx = 0;
+    for (const auto& q : sh[0].pts) mx = std::max(mx, std::fabs(std::hypot(q.x, q.y) - mean));
+    return mx / (2.f / 120.f);  // in pixels
+  };
+  const float raw = dev(0.f), smooth = dev(1.f);
+  std::printf("  circle radius wobble: %.3f px raw -> %.3f px smoothed\n", raw, smooth);
+  CHECK(smooth < raw);
+  Frame sq = blank(120, 120);
+  fillRect(sq, 30, 30, 90, 90);
+  auto extent = [&](float smoothAmt) {
+    TraceParams tp; tp.contourSmooth = smoothAmt; tp.simplifyEps = 0.05f;
+    auto sh = extractShapes(sq, tp);
+    float mnx = 9, mxx = -9;
+    for (const auto& q : sh[0].pts) { mnx = std::min(mnx, q.x); mxx = std::max(mxx, q.x); }
+    return mxx - mnx;
+  };
+  CHECK(std::fabs(extent(1.f) - extent(0.f)) < 1.5f * (2.f / 120.f));  // corners were not rounded away
 }
 
 static void testGridFitsFrame() {
@@ -600,6 +682,8 @@ static void testBeyondSink() {
 }
 
 int main() {
+  testSchedule();
+  testRefine();
   testGridFitsFrame();
   testBeyondSink();
   testWireAndBridge();
