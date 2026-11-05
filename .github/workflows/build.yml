@@ -68,6 +68,8 @@ jobs:
   package:
     needs: [windows-plugin, windows-bridge32]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -83,10 +85,19 @@ jobs:
           mkdir -p LaserMap-Windows
           cp dl/plugin/LaserMap.dll LaserMap-Windows/
           cp dl/bridge/lasermap_bridge.exe LaserMap-Windows/
-          cp packaging/Install-LaserMap.ps1 packaging/README-FIRST.txt LaserMap-Windows/
+          cp packaging/Install-LaserMap.ps1 packaging/Install-LaserMap.bat packaging/Uninstall-LaserMap.ps1 packaging/Uninstall-LaserMap.bat packaging/README-FIRST.txt LaserMap-Windows/
           cp LICENSE LaserMap-Windows/
       - uses: actions/upload-artifact@v4
         with:
           name: LaserMap-Windows
           path: LaserMap-Windows
           if-no-files-found: error
+      - name: Zip for release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: zip -r LaserMap-Windows.zip LaserMap-Windows
+      - name: Publish release (draft)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LaserMap-Windows.zip
+          draft: true

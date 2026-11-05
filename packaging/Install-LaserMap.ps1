@@ -21,8 +21,10 @@ Write-Host "Helper installed:  $app\lasermap_bridge.exe" -ForegroundColor Green
 
 # 3) Is Pangolin's SDK file where the helper can find it? Try the running BEYOND first, then common places.
 $dll = $null
+$local = Join-Path $here 'BEYONDIO.dll'   # optional: drop Pangolin's file next to this installer
+if (Test-Path $local) { $dll = Get-Item $local }
 $proc = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'BEYOND*' } | Select-Object -First 1
-if ($proc -and $proc.Path) {
+if (-not $dll -and $proc -and $proc.Path) {
   $cand = Join-Path (Split-Path -Parent $proc.Path) 'BEYONDIO.dll'
   if (Test-Path $cand) { $dll = Get-Item $cand }
 }
