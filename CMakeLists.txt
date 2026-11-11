@@ -15,6 +15,7 @@ add_library(lasermap_core
   src/lasermap/net.cpp
   src/lasermap/beyond_sink.cpp
   src/lasermap/schedule.cpp
+  src/lasermap/react.cpp
   src/lasermap/safety.cpp)
 target_include_directories(lasermap_core PUBLIC src)
 if(MSVC)

@@ -15,6 +15,7 @@
 #include "lasermap/output.h"
 #include "lasermap/safety.h"
 #include "lasermap/schedule.h"
+#include "lasermap/react.h"
 #include "lasermap/trace.h"
 
 // X(id, display name (max 16 chars), group, type, default, options)
@@ -112,7 +113,19 @@
 	X( SCHED_ON, "Use Schedule", "Schedule", B, 0, "" )                                        \
 	X( SCHED_LOOP, "Loop Schedule", "Schedule", B, 1, "" )                                     \
 	X( SCHED_RESTART, "Restart Schedule", "Schedule", E, 0, "" )                               \
-	X( SCHED_TEXT, "Mode Schedule", "Schedule", T, 0, "0-8: Trace Clip; 8-16: Beam Runners; 16-24: Sweep + Grid" )
+	X( SCHED_TEXT, "Mode Schedule", "Schedule", T, 0, "0-8: Trace Clip; 8-16: Beam Runners; 16-24: Sweep + Grid" ) \
+	X( RE_ON, "React To Video", "React", B, 0, "" ) \
+	X( RE_LEVEL, "React Level", "React", S, 0.5, "" ) \
+	X( RE_HOLD, "React Hold", "React", S, 0.25, "" ) \
+	X( RE_HUE, "React Colour", "React", H, 0, "" ) \
+	X( RE_CLIP, "Clip When", "React", O, 0, "Always|Bright|Dark|Motion|Still|Colour" ) \
+	X( RE_BEAMS, "Beams When", "React", O, 0, "Always|Bright|Dark|Motion|Still|Colour" ) \
+	X( RE_SWEEP, "Sweep When", "React", O, 0, "Always|Bright|Dark|Motion|Still|Colour" ) \
+	X( RE_BARS, "Bars When", "React", O, 0, "Always|Bright|Dark|Motion|Still|Colour" ) \
+	X( RE_SPOT, "Spot When", "React", O, 0, "Always|Bright|Dark|Motion|Still|Colour" ) \
+	X( RE_CANNON, "Cannon When", "React", O, 0, "Always|Bright|Dark|Motion|Still|Colour" ) \
+	X( RE_REVEAL, "Reveal When", "React", O, 0, "Always|Bright|Dark|Motion|Still|Colour" ) \
+	X( RE_GRID, "Grid When", "React", O, 0, "Always|Bright|Dark|Motion|Still|Colour" )
 
 enum ParamIndex : unsigned int
 {
@@ -199,6 +212,9 @@ private:
 	double schedClock = 0.0;
 	bool schedWasOn = false;
 	bool schedRestart = false;
+	lasermap::ReactAnalyser reactAn;
+	lasermap::ReactGate reactGates[ 8 ];
+	lasermap::ReactSignals reactSig;
 	std::string textBuf;
 	uint64_t lastBridgeSent = 0;
 	int lastBridgeState = -1;

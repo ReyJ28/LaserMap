@@ -541,6 +541,22 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 		modeBits = schedule.activeAt( schedClock, on( PT_SCHED_LOOP ) );
 	}
 	schedWasOn = schedOn;
+	// React To Video: each mode can be limited to moments when the picture is bright, dark, moving, still or shows
+	// a colour. It only ever removes modes from the set chosen by the toggles / schedule.
+	const bool reactOn = on( PT_RE_ON );
+	if( reactOn )
+	{
+		reactSig = reactAn.update( frame, f( PT_RE_HUE ), 0.3f );
+		static const unsigned condParam[ 8 ] = { PT_RE_CLIP, PT_RE_BEAMS, PT_RE_SWEEP, PT_RE_BARS, PT_RE_SPOT, PT_RE_CANNON, PT_RE_REVEAL, PT_RE_GRID };
+		for( int i = 0; i < 8; ++i )
+		{
+			const auto cond = (lasermap::ReactCond)std::clamp( opt( condParam[ i ] ), 0, 5 );
+			if( !reactGates[ i ].update( cond, reactSig, f( PT_RE_LEVEL ), f( PT_RE_HOLD ) * 2.f, std::min( dt, 0.1 ) ) )
+				modeBits &= ~( 1u << i );
+		}
+	}
+	else
+		reactAn.reset();
 	const bool mClip = modeBits & lasermap::kModeClip, mBeams = modeBits & lasermap::kModeBeams,
 	           mSweep = modeBits & lasermap::kModeSweep, mBars = modeBits & lasermap::kModeBars,
 	           mSpot = modeBits & lasermap::kModeSpot, mCannon = modeBits & lasermap::kModeCannon,
@@ -849,6 +865,13 @@ void LaserMapPlugin::analyse( const FFGLTextureStruct& tex, const FFGLTexCoords&
 		char buf[ 48 ];
 		std::snprintf( buf, sizeof buf, "Armed  %d pts/%d sh", lastPoints, lastShapes );
 		SetParamDisplayName( PT_ARMED, buf, true );
+		if( reactOn )
+		{
+			std::snprintf( buf, sizeof buf, "br %.0f mo %.0f col %.0f", reactSig.brightness * 100, reactSig.motion * 100, reactSig.colour * 100 );
+			SetParamDisplayName( PT_RE_ON, buf, true );
+		}
+		else
+			SetParamDisplayName( PT_RE_ON, "React To Video", true );
 		if( schedOn )
 		{
 			std::snprintf( buf, sizeof buf, "%.0fs: %s", schedClock, lasermap::modeNames( modeBits ).c_str() );

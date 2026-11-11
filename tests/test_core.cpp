@@ -17,6 +17,7 @@
 #include "lasermap/modes.h"
 #include "lasermap/net.h"
 #include "lasermap/schedule.h"
+#include "lasermap/react.h"
 #include "lasermap/wire.h"
 #include "lasermap/safety.h"
 #include "lasermap/trace.h"
@@ -173,6 +174,35 @@ static void testExtract() {
   CHECK(!extractShapes(f, tp).empty());
   auto mk = maskImage(f, tp);
   CHECK(mk.size() == size_t(f.w) * f.h);
+}
+
+static void testReact() {
+  using namespace lasermap;
+  auto solid = [](uint8_t r, uint8_t g, uint8_t b) {
+    Frame f; f.w = 32; f.h = 32; f.rgba.resize(32 * 32 * 4);
+    for (size_t i = 0; i < 32 * 32; ++i) { f.rgba[i*4] = r; f.rgba[i*4+1] = g; f.rgba[i*4+2] = b; f.rgba[i*4+3] = 255; }
+    return f;
+  };
+  ReactAnalyser a;
+  ReactSignals dark = a.update(solid(10, 10, 10), 0.f, 0.25f);
+  ReactSignals bright = a.update(solid(240, 240, 240), 0.f, 0.25f);
+  CHECK(dark.brightness < 0.1f && bright.brightness > 0.85f);
+  CHECK(bright.motion > 0.9f);  // big jump between frames
+  ReactSignals still = a.update(solid(240, 240, 240), 0.f, 0.25f);
+  CHECK(still.motion < 0.01f);
+  ReactSignals red = a.update(solid(255, 0, 0), 0.f, 0.25f), blue = a.update(solid(0, 0, 255), 0.f, 0.25f);
+  CHECK(red.colour > 0.9f && blue.colour < 0.01f);
+  ReactGate g;
+  CHECK(g.update(RBright, bright, 0.5f, 0.f, 0.02));
+  CHECK(!g.update(RBright, dark, 0.5f, 0.f, 0.02));
+  CHECK(g.update(RDark, dark, 0.5f, 0.f, 0.02));
+  CHECK(!g.update(RStill, bright, 0.5f, 0.f, 0.02));  // motion 1 -> not still
+  ReactGate h;  // hold keeps it open briefly
+  h.update(RBright, bright, 0.5f, 0.5f, 0.02);
+  CHECK(h.update(RBright, dark, 0.5f, 0.5f, 0.1));
+  for (int i = 0; i < 10; ++i) h.update(RBright, dark, 0.5f, 0.5f, 0.1);
+  CHECK(!h.open());
+  ReactGate al; CHECK(al.update(RAlways, dark, 0.5f, 0.f, 0.02));
 }
 
 static void testSchedule() {
@@ -682,6 +712,7 @@ static void testBeyondSink() {
 }
 
 int main() {
+  testReact();
   testSchedule();
   testRefine();
   testGridFitsFrame();

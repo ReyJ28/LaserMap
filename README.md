@@ -43,6 +43,8 @@ helper finds `BEYONDIO.dll` in your BEYOND folder, and it closes itself 20 s aft
   Times are seconds or m:ss, segments are separated by `;` or new lines, modes by `+`. End times are exclusive; outside every segment the laser is blank (`none` blanks on purpose). Bad parts are skipped and listed in `Documents\\LaserMap\\lasermap.log`.
   The schedule runs on its own clock that starts when you switch it on; **Restart Schedule** resets it to 0 (map it to the clip trigger or a button). **Loop Schedule** repeats after the last segment. The Use Schedule label shows the clock and current modes.
 
+- **React To Video** (React group): switch it on, then give each mode a rule in its **... When** box: Always, Bright, Dark, Motion, Still or Colour. A mode only runs while its rule holds. **React Level** is the threshold, **React Hold** keeps a mode on briefly after the rule stops (no flicker), **React Colour** picks the hue for the Colour rule. The label shows the live brightness, motion and colour readings (0-100). React only removes modes from the set chosen by the toggles or the schedule, so you can combine both: the schedule decides *when* a mode is allowed, React decides *whether the picture is right* for it.
+
 ## Bridge (plugin -> laser PC)
 
 Same shape as other Resolume-to-BEYOND tools: a plugin in Resolume and a small helper on the computer that
